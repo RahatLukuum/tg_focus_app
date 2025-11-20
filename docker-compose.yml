@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tg_my_app
+    env_file:
+      - ./.env
+    environment:
+      - SESSION_DIR=/sessions
+    volumes:
+      - ./sessions:/sessions
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+

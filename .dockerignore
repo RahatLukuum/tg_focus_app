@@ -1,0 +1,28 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+
+# Docker/Compose
+Dockerfile
+docker-compose.yml
+
+# Local runtime files
+sessions/
+*.session
+backend.out
+backend.pid
+
+# Node
+frontend/node_modules/
+
+# Git metadata
+.git
+.gitignore
+
+# Environment configs
+.env
+
