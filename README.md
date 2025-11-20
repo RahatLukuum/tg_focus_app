@@ -16,13 +16,33 @@
 
 ### Docker Compose
 1. Подготовьте `backend/.env` (см. пример ниже).
-2. Запустите приложение:
+2. Запустите приложение локально:
    ```bash
    cd backend
    docker compose up --build
    ```
 3. Бэкенд доступен на `http://localhost:8080`, собранный фронтенд (если есть) обслуживается на `http://localhost:8080/app`.
    Сессии пользователя сохраняются в каталоге `backend/sessions/` (примонтируется наружу).
+
+#### На сервере
+
+```bash
+# Перед деплоем: скопируйте код и .env (без чувствительных данных в git)
+ssh user@server
+git clone git@github.com:RahatLukuum/tg_focus_app.git
+cd tg_focus_app/backend
+cp /path/to/secure/.env .env        # или создайте файл вручную
+
+# Сборка и запуск в фоне
+docker compose up --build -d
+
+# Просмотр логов
+docker compose logs -f
+
+# Остановка/обновление
+docker compose down                  # остановить
+docker compose pull && docker compose up --build -d
+```
 
 ### 1) Backend
 1. Установка зависимостей
