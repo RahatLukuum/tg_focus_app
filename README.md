@@ -7,26 +7,32 @@
 - Node.js 18+ и npm
 - Telegram API credentials: API_ID, API_HASH (`https://my.telegram.org`)
 
-## Быстрый старт
+## Структура репозитория
+
+- `backend/` — FastAPI + Telethon бэкенд, Dockerfile, docker-compose и скрипты запуска.
+- `frontend/` — (будет добавлен отдельно) клиентская часть на Vite/React.
+
+## Быстрый старт (только бэкенд)
 
 ### Docker Compose
-1. Подготовьте `.env` рядом с `main.py` (см. пример ниже).
+1. Подготовьте `backend/.env` (см. пример ниже).
 2. Запустите приложение:
    ```bash
+   cd backend
    docker compose up --build
    ```
-3. Бэкенд доступен на `http://localhost:8080`, собранный фронтенд обслуживается на `http://localhost:8080/app`.
-   Сессии пользователя сохраняются в каталоге `sessions/` на хосте.
+3. Бэкенд доступен на `http://localhost:8080`, собранный фронтенд (если есть) обслуживается на `http://localhost:8080/app`.
+   Сессии пользователя сохраняются в каталоге `backend/sessions/` (примонтируется наружу).
 
 ### 1) Backend
 1. Установка зависимостей
    ```bash
-   cd /Users/macbook/Desktop/backend/tg_my
+   cd backend
    python3 -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-2. Конфигурация окружения (`.env` рядом с `main.py`)
+2. Конфигурация окружения (`backend/.env`)
    ```env
    API_ID=ВАШ_API_ID
    API_HASH=ВАШ_API_HASH
@@ -40,7 +46,8 @@
    ```
 3. Запуск на порту 8080 (рекомендовано)
    ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir /Users/macbook/Desktop/backend/tg_my
+   cd backend
+   uvicorn main:app --host 0.0.0.0 --port 8080 --app-dir .
    ```
    Проверка:
    ```bash
@@ -52,7 +59,7 @@
 ### 2) Frontend
 1. Настроить адрес бэкенда и установить зависимости
    ```bash
-   cd /Users/macbook/Desktop/backend/tg_my/frontend
+   cd frontend
    echo 'VITE_API_BASE_URL=http://localhost:8080' > .env.local
    npm i
    npm run dev -- --port 5173
@@ -63,9 +70,9 @@
 - Первый вход:
   1) Нажмите «Получить код», введите номер в формате `+7XXXXXXXXXX`.
   2) Введите код из Telegram (при необходимости — 2FA пароль).
-  3) После успеха рядом с `main.py` появится файл сессии `<LOGIN>.session`.
+  3) После успеха в каталоге `backend/` (подкаталог `sessions/`) появится файл `<LOGIN>.session`.
 - Повторные входы:
-  - Не меняйте `LOGIN` в `.env`. Можно нажать «Войти (по сохраненной сессии)» — код не потребуется.
+  - Не меняйте `LOGIN` в `backend/.env`. Можно нажать «Войти (по сохраненной сессии)» — код не потребуется.
   - Смена `LOGIN` = новая сессия → потребуется снова код.
 
 ## Возможности

@@ -1,18 +1,27 @@
 # Python / virtualenv
-__pycache__/
+# Virtualenvs
 .venv/
+backend/.venv/
+
+# Python cache
+__pycache__/
+backend/__pycache__/
 
 # OS noise
 .DS_Store
 
 # Secrets / sessions
 .env
+backend/.env
 sessions/
+backend/sessions/
 *.session
 *.session-journal
 
 # Runtime artefacts
 backend.out
 backend.pid
+backend/backend.out
+backend/backend.pid
 
 

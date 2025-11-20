@@ -2,7 +2,8 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND_DIR="${PROJECT_ROOT}/frontend"
+REPO_ROOT="$(cd "${PROJECT_ROOT}/.." && pwd)"
+FRONTEND_DIR="${REPO_ROOT}/frontend"
 VENV_DIR="${PROJECT_ROOT}/.venv"
 ENV_FILE="${PROJECT_ROOT}/.env"
 export SESSION_DIR="${PROJECT_ROOT}/sessions"
