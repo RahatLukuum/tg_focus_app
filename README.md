@@ -10,7 +10,7 @@
 ## Структура репозитория
 
 - `backend/` — FastAPI + Telethon бэкенд, Dockerfile, docker-compose и скрипты запуска.
-- `frontend/` — (будет добавлен отдельно) клиентская часть на Vite/React.
+- `frontend/` — Vite/React клиент + десктопная оболочка на Tauri.
 
 ## Быстрый старт (только бэкенд)
 
@@ -77,14 +77,34 @@ docker compose pull && docker compose up --build -d
    Swagger UI: `http://localhost:8080/docs`
 
 ### 2) Frontend
-1. Настроить адрес бэкенда и установить зависимости
+1. Настроить адрес бэкенда (при необходимости)
    ```bash
    cd frontend
    echo 'VITE_API_BASE_URL=http://localhost:8080' > .env.local
-   npm i
+   ```
+2. Установить зависимости
+   ```bash
+   npm install
+   ```
+3. Режим разработки (web)
+   ```bash
    npm run dev -- --port 5173
    ```
-2. Открыть приложение: `http://localhost:5173`
+   Приложение доступно на `http://localhost:5173`.
+4. Сборка production-бандла (web)
+   ```bash
+   npm run build
+   ```
+   Результат появится в каталоге `frontend/dist/`.
+5. Desktop (Tauri) — режим разработки
+   ```bash
+   npm run tauri:dev
+   ```
+6. Desktop (Tauri) — сборка установщика
+   ```bash
+   npm run tauri:build
+   ```
+   Готовые пакеты сохраняются в `frontend/src-tauri/target/release/bundle/` (для Windows — подпапка `msi/` с `.msi` или `.exe`).
 
 ## Авторизация
 - Первый вход:
