@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 from pyrogram.handlers import MessageHandler
 from pyrogram.types import Message
+from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from decouple import config
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -380,14 +381,28 @@ async def auth_sign_in(payload: Dict[str, str]):
 
     client = get_or_create_client(phone)
     await ensure_client_connected(client)
-    try:
-        await client.sign_in(phone_number=phone, phone_code=code, phone_code_hash=phone_code_hash)
-    except Exception as e:
-        if "SESSION_PASSWORD_NEEDED" in str(e).upper() or "PASSWORD" in str(e).upper():
-            if not password:
-                raise HTTPException(status_code=401, detail="Two-factor password required")
+
+    # 2FA: после sign_in Pyrogram ждёт check_password. Повторный sign_in с тем же кодом ломает вход.
+    if password:
+        try:
             await client.check_password(password=password)
-        else:
+        except PasswordHashInvalid:
+            raise HTTPException(
+                status_code=400,
+                detail="Неверный пароль двухфакторной аутентификации",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        try:
+            await client.sign_in(
+                phone_number=phone,
+                phone_code=code,
+                phone_code_hash=phone_code_hash,
+            )
+        except SessionPasswordNeeded:
+            raise HTTPException(status_code=401, detail="Two-factor password required")
+        except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
     try:

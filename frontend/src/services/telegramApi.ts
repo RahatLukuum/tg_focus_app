@@ -1,5 +1,7 @@
 import { TelegramConfig, User, Chat, Message } from '@/types/telegram';
 
+const ACTIVE_ACCOUNT_KEY = 'tg_active_account';
+
 class TelegramApiService {
   private baseUrl: string;
   private config: TelegramConfig | null = null;
@@ -7,12 +9,37 @@ class TelegramApiService {
   private currentUser: User | null = null;
   private lastPhone: string | null = null;
   private lastCode: string | null = null;
+  /** Номер аккаунта для мульти-клиента на бэке (query/body `account`) */
+  private activeAccount: string | null = null;
 
   constructor() {
     const envBase = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
     // Single source of truth: env with default to your server
     this.baseUrl = (envBase && envBase.trim()) || 'http://185.250.149.23:8080';
+    try {
+      const saved = localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+      if (saved) this.activeAccount = saved;
+    } catch {
+      /* ignore */
+    }
     try { console.log('[telegramApi] baseUrl =', this.baseUrl); } catch {}
+  }
+
+  private setActiveAccount(phone: string | null) {
+    this.activeAccount = phone;
+    try {
+      if (phone) localStorage.setItem(ACTIVE_ACCOUNT_KEY, phone);
+      else localStorage.removeItem(ACTIVE_ACCOUNT_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Добавляет ?account= для эндпоинтов не /auth */
+  private withAccountQuery(path: string): string {
+    if (!this.activeAccount || path.startsWith('/auth')) return path;
+    const joiner = path.includes('?') ? '&' : '?';
+    return `${path}${joiner}account=${encodeURIComponent(this.activeAccount)}`;
   }
 
   async initialize(config: TelegramConfig) {
@@ -59,6 +86,7 @@ class TelegramApiService {
       if (res.ok) {
         // доверяем ответу бэкенда, если он вернул me
         if (res.me && res.me.id) {
+          this.setActiveAccount(normalized);
           this.currentUser = {
             id: res.me.id,
             firstName: res.me.first_name,
@@ -71,19 +99,21 @@ class TelegramApiService {
         // fallback: спросим /me
         const me = await this.fetchJson('/me');
         if (me.authorized && me.me) {
-    this.currentUser = {
+          this.setActiveAccount(normalized);
+          this.currentUser = {
             id: me.me.id,
             firstName: me.me.first_name,
             lastName: undefined,
             username: me.me.username,
           };
-    this.isAuthenticated = true;
-    return { user: this.currentUser };
+          this.isAuthenticated = true;
+          return { user: this.currentUser };
         }
       }
       throw new Error('Не удалось войти');
     } catch (e: any) {
-      if (typeof e.message === 'string' && e.message.includes('Two-factor password required')) {
+      const msg = typeof e.message === 'string' ? e.message : '';
+      if (msg.includes('Two-factor password required')) {
         throw new Error('TWO_FACTOR_AUTH_REQUIRED');
       }
       throw e;
@@ -98,9 +128,22 @@ class TelegramApiService {
       method: 'POST',
       body: JSON.stringify({ phone: this.lastPhone, code: this.lastCode, password })
     });
+    if (res.ok && res.me && res.me.id) {
+      // Не вызываем /me без account — на бэке это другой клиент (LOGIN), не сессия по номеру
+      this.setActiveAccount(this.lastPhone);
+      this.currentUser = {
+        id: res.me.id,
+        firstName: res.me.first_name,
+        lastName: undefined,
+        username: res.me.username,
+      };
+      this.isAuthenticated = true;
+      return { user: this.currentUser };
+    }
     if (res.ok) {
       const me = await this.fetchJson('/me');
       if (me.authorized && me.me) {
+        this.setActiveAccount(this.lastPhone);
         this.currentUser = {
           id: me.me.id,
           firstName: me.me.first_name,
@@ -108,7 +151,7 @@ class TelegramApiService {
           username: me.me.username,
         };
         this.isAuthenticated = true;
-    return { user: this.currentUser };
+        return { user: this.currentUser };
       }
     }
     throw new Error('Не удалось войти');
@@ -229,6 +272,7 @@ class TelegramApiService {
     this.config = null;
     this.lastPhone = null;
     this.lastCode = null;
+    this.setActiveAccount(null);
   }
 
   async checkAuth(): Promise<boolean> {
@@ -257,12 +301,32 @@ class TelegramApiService {
 
   private async fetchJson(path: string, init?: RequestInit): Promise<any> {
     const attempt = async (base: string) => {
-      const url = base + path;
+      const pathWithAcc = this.withAccountQuery(path);
+      let mergedInit = init;
+      if (
+        this.activeAccount &&
+        !path.startsWith('/auth') &&
+        init?.body &&
+        typeof init.body === 'string'
+      ) {
+        try {
+          const o = JSON.parse(init.body);
+          if (typeof o === 'object' && o !== null && !('account' in o)) {
+            mergedInit = {
+              ...init,
+              body: JSON.stringify({ ...o, account: this.activeAccount }),
+            };
+          }
+        } catch {
+          /* keep init */
+        }
+      }
+      const url = base + pathWithAcc;
       // Tauri macOS: allow cleartext to specific server via ATS exception; here just log for diagnostics
       try { console.debug('[fetch]', url); } catch {}
       const res = await fetch(url, {
         headers: { 'Content-Type': 'application/json' },
-        ...init,
+        ...mergedInit,
       });
       if (!res.ok) {
         let detail = 'Request failed';
