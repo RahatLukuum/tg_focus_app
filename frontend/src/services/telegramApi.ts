@@ -158,6 +158,22 @@ class TelegramApiService {
   }
 
   async getCurrentUser(): Promise<User> {
+    if (!this.currentUser) {
+      try {
+        const me = await this.fetchJson('/me');
+        if (me.authorized && me.me) {
+          this.currentUser = {
+            id: me.me.id,
+            firstName: me.me.first_name,
+            lastName: undefined,
+            username: me.me.username,
+          };
+          this.isAuthenticated = true;
+        }
+      } catch {
+        // ignore, throw below
+      }
+    }
     if (!this.isAuthenticated || !this.currentUser) {
       throw new Error('Пользователь не авторизован');
     }

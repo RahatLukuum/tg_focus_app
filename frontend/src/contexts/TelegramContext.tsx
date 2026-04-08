@@ -118,7 +118,7 @@ interface TelegramContextType {
   signInWithPassword: (password: string) => Promise<void>;
   sendMessage: (chatId: number, text: string) => Promise<void>;
   sendMedia: (chatId: number, file: Blob, mediaType: MediaType, caption?: string) => Promise<void>;
-  loadChats: () => Promise<void>;
+  loadChats: (force?: boolean) => Promise<void>;
   loadMessages: (chatId: number) => Promise<void>;
   loadOlderMessages: (chatId: number) => Promise<void>;
   goBack: () => void;
@@ -143,7 +143,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (isAuth) {
           const user = await telegramApi.getCurrentUser();
           dispatch({ type: 'SET_USER', payload: user });
-          await loadChats();
+          await loadChats(true);
           openWebSocket();
         }
       } catch (error: any) {
@@ -185,7 +185,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await telegramApi.signIn(state.auth.phoneNumber, code, state.phoneCodeHash);
       const user = await telegramApi.getCurrentUser();
       dispatch({ type: 'SET_USER', payload: user });
-      await loadChats();
+      await loadChats(true);
       openWebSocket();
     } catch (error: any) {
       console.error('Ошибка входа:', error);
@@ -207,7 +207,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       await telegramApi.signInWithPassword(password);
       const user = await telegramApi.getCurrentUser();
       dispatch({ type: 'SET_USER', payload: user });
-      await loadChats();
+      await loadChats(true);
       openWebSocket();
     } catch (error: any) {
       console.error('Ошибка входа с паролем:', error);
@@ -238,8 +238,8 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  const loadChats = async () => {
-    if (!state.auth.isAuthenticated) return;
+  const loadChats = async (force: boolean = false) => {
+    if (!force && !state.auth.isAuthenticated) return;
     
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
