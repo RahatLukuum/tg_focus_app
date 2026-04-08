@@ -23,6 +23,8 @@ export interface Chat {
   isOnline?: boolean;
 }
 
+export type MediaType = 'photo' | 'video' | 'voice' | 'document';
+
 export interface Message {
   id: number;
   chatId: number;
@@ -32,6 +34,10 @@ export interface Message {
   isOutgoing: boolean;
   replyToMessage?: Message;
   edited?: boolean;
+  mediaType?: MediaType;
+  mediaUrl?: string;
+  fileName?: string;
+  duration?: number;
 }
 
 export interface AuthState {

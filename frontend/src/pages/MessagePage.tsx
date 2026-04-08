@@ -14,33 +14,32 @@ const MessagePage = () => {
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
   const { state, loadChats } = useTelegram();
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const isIdPhoneOrUsername = useMemo(() => {
     const q = searchQuery.trim();
     if (!q) return false;
-    const isNumericId = /^\d+$/.test(q); // allow any length for user id
-    const isPhone = /^\+?\d[\d\s\-()]{4,}$/.test(q); // phone with at least 5 digits total
-    const isUsername = /^@?[a-zA-Z0-9_]{5,}$/.test(q); // basic telegram username heuristic
+    const isNumericId = /^\d+$/.test(q);
+    const isPhone = /^\+?\d[\d\s\-()]{4,}$/.test(q);
+    const isUsername = /^@?[a-zA-Z0-9_]{5,}$/.test(q);
     return isNumericId || isPhone || isUsername;
   }, [searchQuery]);
 
   useEffect(() => {
     const shouldRefresh = (location.state as any)?.refresh;
-    const proceed = async () => {
-      if (shouldRefresh || state.chats.length === 0) {
-        await loadChats();
-      }
-      const list: Contact[] = (state.chats || []).map(c => ({
-        id: c.id,
-        name: c.title,
-        lastMessage: c.lastMessage?.text,
-        time: c.lastMessage ? new Date(c.lastMessage.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : undefined,
-      }));
-      setContacts(list);
-    };
-    proceed().catch(() => {});
+    if (shouldRefresh || state.chats.length === 0) {
+      loadChats().catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  const contacts: Contact[] = useMemo(() =>
+    (state.chats || []).map(c => ({
+      id: c.id,
+      name: c.title,
+      lastMessage: c.lastMessage?.text,
+      time: c.lastMessage ? new Date(c.lastMessage.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : undefined,
+    })),
+    [state.chats]
+  );
 
   const filteredContacts = contacts.filter(contact =>
     contact.name.toLowerCase().includes(searchQuery.toLowerCase())

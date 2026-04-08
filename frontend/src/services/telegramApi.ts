@@ -1,4 +1,4 @@
-import { TelegramConfig, User, Chat, Message } from '@/types/telegram';
+import { TelegramConfig, User, Chat, Message, MediaType } from '@/types/telegram';
 
 const ACTIVE_ACCOUNT_KEY = 'tg_active_account';
 
@@ -191,32 +191,45 @@ class TelegramApiService {
     return chats;
   }
 
-  async getMessages(chatId: number, limit: number = 100): Promise<Message[]> {
+  async getContacts(): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
-    const res = await this.fetchJson(`/messages?chat_id=${encodeURIComponent(chatId)}&limit=${limit}`);
-    const messages: Message[] = (res.messages || []).map((m: any) => ({
+    const res = await this.fetchJson('/contacts');
+    return (res.contacts || []).map((c: any) => ({
+      id: c.chat_id,
+      title: c.title || 'Без названия',
+      type: 'private' as Chat['type'],
+      unreadCount: 0,
+    }));
+  }
+
+  private mapMessage(m: any, chatId: number): Message {
+    const msg: Message = {
       id: m.id,
-      chatId: res.chat_id,
+      chatId,
       senderId: m.from_user_id || 0,
       text: m.text || '',
       date: m.date ? new Date(m.date * 1000) : new Date(),
       isOutgoing: !!m.outgoing,
-    }));
-    return messages;
+    };
+    if (m.media_type) {
+      msg.mediaType = m.media_type as MediaType;
+      msg.mediaUrl = m.media_url ? this.baseUrl + this.withAccountQuery(m.media_url) : undefined;
+      if (m.file_name) msg.fileName = m.file_name;
+      if (m.duration != null) msg.duration = m.duration;
+    }
+    return msg;
+  }
+
+  async getMessages(chatId: number, limit: number = 100): Promise<Message[]> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson(`/messages?chat_id=${encodeURIComponent(chatId)}&limit=${limit}`);
+    return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
   async getOlderMessages(chatId: number, beforeId: number, limit: number = 100): Promise<Message[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson(`/messages?chat_id=${encodeURIComponent(chatId)}&limit=${limit}&before_id=${beforeId}`);
-    const messages: Message[] = (res.messages || []).map((m: any) => ({
-      id: m.id,
-      chatId: res.chat_id,
-      senderId: m.from_user_id || 0,
-      text: m.text || '',
-      date: m.date ? new Date(m.date * 1000) : new Date(),
-      isOutgoing: !!m.outgoing,
-    }));
-    return messages;
+    return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
   async sendMessage(chatId: number, text: string): Promise<Message> {
@@ -234,6 +247,46 @@ class TelegramApiService {
       date: new Date(),
       isOutgoing: true,
     };
+  }
+
+  async sendMedia(chatId: number, file: Blob, mediaType: MediaType, caption?: string): Promise<Message> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('media_type', mediaType);
+    form.append('caption', caption || '');
+    if (this.activeAccount) form.append('account', this.activeAccount);
+    const ext = mediaType === 'photo' ? '.jpg' : mediaType === 'video' ? '.mp4' : mediaType === 'voice' ? '.ogg' : '.bin';
+    form.append('file', file, `upload${ext}`);
+    const url = this.baseUrl + this.withAccountQuery('/send_media');
+    const res = await fetch(url, { method: 'POST', body: form });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || 'Upload failed');
+    }
+    const currentUser = await this.getCurrentUser();
+    return {
+      id: Date.now(),
+      chatId,
+      senderId: currentUser.id,
+      text: caption || '',
+      date: new Date(),
+      isOutgoing: true,
+      mediaType,
+    };
+  }
+
+  getMediaUrl(path: string): string {
+    return this.baseUrl + this.withAccountQuery(path);
+  }
+
+  async generateReply(chatId: number, prompt?: string): Promise<string> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson('/generate_reply', {
+      method: 'POST',
+      body: JSON.stringify({ chat_id: chatId, prompt: prompt || '' }),
+    });
+    return res.reply || '';
   }
 
   async resolveContact(params: { userId?: number; phone?: string; username?: string }): Promise<{ userId: number; chatId: number }> {

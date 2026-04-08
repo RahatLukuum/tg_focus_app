@@ -4,11 +4,13 @@ from pyrogram.types import Message
 from pyrogram.errors import SessionPasswordNeeded, PasswordHashInvalid
 from decouple import config
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import tempfile
+import io
 
 import asyncio
 from pathlib import Path
@@ -430,6 +432,38 @@ async def get_me(account: str = ""):
 
 # ==== ДИАЛОГИ и ИСТОРИЯ ====
 
+@app.get("/contacts")
+async def get_contacts(account: str = ""):
+    client_obj: Client
+    if account:
+        client_obj = get_or_create_client(account)
+        await ensure_client_connected(client_obj)
+    else:
+        await ensure_started()
+        client_obj = bot
+    try:
+        await client_obj.get_me()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authorized")
+    contacts_list: List[Dict[str, Any]] = []
+    try:
+        users = await client_obj.get_contacts()
+        for u in users:
+            first = getattr(u, "first_name", None) or ""
+            last = getattr(u, "last_name", None) or ""
+            title = (first + (" " + last if last else "")).strip() or str(u.id)
+            contacts_list.append({
+                "chat_id": u.id,
+                "title": title,
+                "type": "private",
+                "username": getattr(u, "username", None),
+                "phone": getattr(u, "phone_number", None),
+            })
+    except Exception:
+        pass
+    return {"contacts": contacts_list}
+
+
 @app.get("/dialogs")
 async def get_dialogs(limit: int = 100, account: str = ""):
     client: Client
@@ -485,9 +519,7 @@ async def get_messages(chat_id: int, limit: int = 50, before_id: Optional[int] =
     except Exception:
         raise HTTPException(status_code=401, detail="Not authorized")
     history = []
-    # Pyrogram v2: используем get_chat_history
     kwargs: Dict[str, Any] = {"limit": limit}
-    # подгружаем более старые сообщения, чем before_id
     if before_id:
         try:
             kwargs["max_id"] = int(before_id) - 1
@@ -495,18 +527,41 @@ async def get_messages(chat_id: int, limit: int = 50, before_id: Optional[int] =
             pass
     async for m in client.get_chat_history(chat_id, **kwargs):
         text_content = (m.text or m.caption or "").strip()
-        if not text_content:
-            # пропускаем пустые сообщения (медиа/сервисные) по запросу пользователя
+        media_type = None
+        file_name = None
+        duration = None
+        if m.photo:
+            media_type = "photo"
+        elif m.video:
+            media_type = "video"
+            duration = getattr(m.video, "duration", None)
+            file_name = getattr(m.video, "file_name", None)
+        elif m.voice:
+            media_type = "voice"
+            duration = getattr(m.voice, "duration", None)
+        elif m.video_note:
+            media_type = "video"
+            duration = getattr(m.video_note, "duration", None)
+        elif m.document:
+            media_type = "document"
+            file_name = getattr(m.document, "file_name", None)
+        if not text_content and not media_type:
             continue
-        history.append(
-            {
-                "id": m.id,
-                "text": text_content,
-                "date": int(m.date.timestamp()) if m.date else None,
-                "from_user_id": m.from_user.id if m.from_user else None,
-                "outgoing": m.outgoing,
-            }
-        )
+        entry: Dict[str, Any] = {
+            "id": m.id,
+            "text": text_content,
+            "date": int(m.date.timestamp()) if m.date else None,
+            "from_user_id": m.from_user.id if m.from_user else None,
+            "outgoing": m.outgoing,
+        }
+        if media_type:
+            entry["media_type"] = media_type
+            entry["media_url"] = f"/media/{chat_id}/{m.id}"
+            if file_name:
+                entry["file_name"] = file_name
+            if duration is not None:
+                entry["duration"] = duration
+        history.append(entry)
     history.reverse()
     return {"chat_id": chat_id, "messages": history}
 
@@ -550,6 +605,97 @@ async def chat_info(chat_id: int, account: str = ""):
         }
     }
 
+
+
+# ==== МЕДИА ====
+
+@app.get("/media/{chat_id}/{message_id}")
+async def get_media(chat_id: int, message_id: int, account: str = ""):
+    client_obj: Client
+    if account:
+        client_obj = get_or_create_client(account)
+        await ensure_client_connected(client_obj)
+    else:
+        await ensure_started()
+        client_obj = bot
+    try:
+        msgs = [m async for m in client_obj.get_chat_history(chat_id, limit=1, offset_id=message_id + 1)]
+        if not msgs:
+            raise HTTPException(status_code=404, detail="Message not found")
+        msg = msgs[0]
+        if msg.id != message_id:
+            raise HTTPException(status_code=404, detail="Message not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    buf = io.BytesIO()
+    try:
+        await client_obj.download_media(msg, file_name=buf)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    buf.seek(0)
+
+    ct = "application/octet-stream"
+    if msg.photo:
+        ct = "image/jpeg"
+    elif msg.video or msg.video_note:
+        ct = "video/mp4"
+    elif msg.voice:
+        ct = "audio/ogg"
+    elif msg.document:
+        mime = getattr(msg.document, "mime_type", None)
+        if mime:
+            ct = mime
+    return StreamingResponse(buf, media_type=ct)
+
+
+@app.post("/send_media")
+async def api_send_media(
+    chat_id: int = Form(...),
+    media_type: str = Form(...),
+    account: str = Form(""),
+    caption: str = Form(""),
+    file: UploadFile = File(...),
+):
+    client_obj: Client
+    if account:
+        client_obj = get_or_create_client(account)
+        await ensure_client_connected(client_obj)
+    else:
+        await ensure_started()
+        client_obj = bot
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename or "file").suffix)
+    try:
+        content = await file.read()
+        tmp.write(content)
+        tmp.flush()
+        tmp_path = tmp.name
+        tmp.close()
+
+        sent = None
+        if media_type == "photo":
+            sent = await client_obj.send_photo(chat_id=chat_id, photo=tmp_path, caption=caption or None)
+        elif media_type == "video":
+            sent = await client_obj.send_video(chat_id=chat_id, video=tmp_path, caption=caption or None)
+        elif media_type == "voice":
+            sent = await client_obj.send_voice(chat_id=chat_id, voice=tmp_path, caption=caption or None)
+        elif media_type == "document":
+            sent = await client_obj.send_document(chat_id=chat_id, document=tmp_path, caption=caption or None)
+        else:
+            raise HTTPException(status_code=400, detail="Unknown media_type")
+        return {"ok": True, "message_id": sent.id if sent else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        try:
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 # ==== ОТПРАВКА СООБЩЕНИЙ ====
@@ -798,6 +944,71 @@ async def resolve_contact(payload: Dict[str, Any]):
             raise HTTPException(status_code=404, detail="User not found by username")
 
     raise HTTPException(status_code=400, detail="invalid payload")
+
+
+# ==== ГЕНЕРАЦИЯ ОТВЕТА ЧЕРЕЗ CLAUDE ====
+
+ANTHROPIC_API_KEY = config("ANTHROPIC_API_KEY", default="")
+
+@app.post("/generate_reply")
+async def generate_reply(payload: Dict[str, Any]):
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    account = str(payload.get("account", "")).strip()
+    chat_id = payload.get("chat_id")
+    if chat_id is None:
+        raise HTTPException(status_code=400, detail="chat_id is required")
+    user_prompt = str(payload.get("prompt", "")).strip()
+
+    client_obj: Client
+    if account:
+        client_obj = get_or_create_client(account)
+        await ensure_client_connected(client_obj)
+    else:
+        await ensure_started()
+        client_obj = bot
+
+    history = []
+    async for m in client_obj.get_chat_history(int(chat_id), limit=20):
+        text = (m.text or m.caption or "").strip()
+        if text:
+            role = "assistant" if m.outgoing else "user"
+            history.append({"role": role, "content": text})
+    history.reverse()
+
+    if not history:
+        raise HTTPException(status_code=400, detail="No messages to generate reply from")
+
+    system_msg = user_prompt or "Ты — помощник пользователя в Telegram-переписке. Сгенерируй подходящий ответ на последнее сообщение собеседника. Пиши кратко и по делу. Отвечай на том же языке, что и собеседник."
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 1024,
+                    "system": system_msg,
+                    "messages": history,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
+            reply = "\n".join(text_blocks).strip()
+            if not reply:
+                raise HTTPException(status_code=500, detail="Empty response from Claude")
+            return {"ok": True, "reply": reply}
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=502, detail=f"Claude API error: {e.response.text}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

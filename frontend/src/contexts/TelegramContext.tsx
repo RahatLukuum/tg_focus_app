@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
-import { TelegramConfig, AuthState, Chat, Message, User } from '@/types/telegram';
+import { TelegramConfig, AuthState, Chat, Message, User, MediaType } from '@/types/telegram';
 import { telegramApi } from '@/services/telegramApi';
 
 interface TelegramState {
@@ -112,6 +112,7 @@ interface TelegramContextType {
   signIn: (code: string) => Promise<void>;
   signInWithPassword: (password: string) => Promise<void>;
   sendMessage: (chatId: number, text: string) => Promise<void>;
+  sendMedia: (chatId: number, file: Blob, mediaType: MediaType, caption?: string) => Promise<void>;
   loadChats: () => Promise<void>;
   loadMessages: (chatId: number) => Promise<void>;
   loadOlderMessages: (chatId: number) => Promise<void>;
@@ -217,13 +218,28 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
+  const sendMedia = async (chatId: number, file: Blob, mediaType: MediaType, caption?: string) => {
+    try {
+      const message = await telegramApi.sendMedia(chatId, file, mediaType, caption);
+      dispatch({ type: 'ADD_MESSAGE', payload: message });
+    } catch (error: any) {
+      console.error('Ошибка отправки медиа:', error);
+      dispatch({ type: 'SET_ERROR', payload: error.message || 'Ошибка отправки медиа' });
+    }
+  };
+
   const loadChats = async () => {
     if (!state.auth.isAuthenticated) return;
     
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const chats = await telegramApi.getChats();
-      dispatch({ type: 'SET_CHATS', payload: chats });
+      const [dialogs, contacts] = await Promise.all([
+        telegramApi.getChats(),
+        telegramApi.getContacts().catch(() => [] as Chat[]),
+      ]);
+      const seen = new Set(dialogs.map(d => d.id));
+      const merged = [...dialogs, ...contacts.filter(c => !seen.has(c.id))];
+      dispatch({ type: 'SET_CHATS', payload: merged });
     } catch (error: any) {
       console.error('Ошибка загрузки чатов:', error);
       dispatch({ type: 'SET_ERROR', payload: error.message || 'Ошибка загрузки чатов' });
@@ -324,6 +340,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     signIn,
     signInWithPassword,
     sendMessage,
+    sendMedia,
     loadChats,
     loadMessages,
     loadOlderMessages,

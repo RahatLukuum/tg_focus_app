@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { MessageSquare, Users, LogOut } from 'lucide-react';
+import { MessageSquare, Users, LogOut, ListTodo } from 'lucide-react';
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -34,6 +34,15 @@ const HomePage = () => {
             >
               <Users className="w-6 h-6 mr-3" />
               Разбор очереди
+            </Button>
+
+            <Button 
+              className="w-full h-16 text-lg"
+              variant="outline"
+              onClick={() => navigate('/todo')}
+            >
+              <ListTodo className="w-6 h-6 mr-3" />
+              Список задач
             </Button>
           </div>
 
