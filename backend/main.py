@@ -60,7 +60,7 @@ try:
 except Exception:
     proxy = None
 
-bot = Client(name=login, api_id=api_id, api_hash=api_hash, proxy=proxy, workdir=session_dir, in_memory=True)
+bot = Client(name=login, api_id=api_id, api_hash=api_hash, proxy=proxy, workdir=session_dir)
 
 
 # Глобальные состояния
@@ -315,7 +315,6 @@ def get_or_create_client(account: str) -> Client:
         api_hash=api_hash,
         proxy=proxy,
         workdir=session_dir,
-        in_memory=True,
     )
     attach_incoming_handler(c, account_key)
     clients[account_key] = c
