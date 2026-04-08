@@ -242,6 +242,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } catch (error: any) {
       console.error('Ошибка отправки медиа:', error);
       dispatch({ type: 'SET_ERROR', payload: error.message || 'Ошибка отправки медиа' });
+      throw error;
     }
   };
 

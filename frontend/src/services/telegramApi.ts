@@ -256,7 +256,14 @@ class TelegramApiService {
     form.append('media_type', mediaType);
     form.append('caption', caption || '');
     if (this.activeAccount) form.append('account', this.activeAccount);
-    const ext = mediaType === 'photo' ? '.jpg' : mediaType === 'video' ? '.mp4' : mediaType === 'voice' ? '.ogg' : '.bin';
+    const fileType = file.type || '';
+    const ext = mediaType === 'photo'
+      ? '.jpg'
+      : mediaType === 'video'
+        ? '.mp4'
+        : mediaType === 'voice'
+          ? (fileType.includes('webm') ? '.webm' : '.ogg')
+          : '.bin';
     form.append('file', file, `upload${ext}`);
     const url = this.baseUrl + this.withAccountQuery('/send_media');
     const res = await fetch(url, { method: 'POST', body: form });

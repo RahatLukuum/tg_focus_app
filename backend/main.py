@@ -767,7 +767,11 @@ async def api_send_media(
         await ensure_started()
         client_obj = bot
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename or "file").suffix)
+    tmp_path: Optional[str] = None
+    suffix = Path(file.filename or "file").suffix
+    if not suffix:
+        suffix = ".ogg" if media_type == "voice" else ".bin"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         content = await file.read()
         tmp.write(content)
@@ -786,14 +790,21 @@ async def api_send_media(
             sent = await client_obj.send_document(chat_id=chat_id, document=tmp_path, caption=caption or None)
         else:
             raise HTTPException(status_code=400, detail="Unknown media_type")
-        return {"ok": True, "message_id": sent.id if sent else None}
+        sent_id = sent.id if sent else None
+        return {
+            "ok": True,
+            "message_id": sent_id,
+            "media_type": media_type,
+            "media_url": f"/media/{chat_id}/{sent_id}" if sent_id else None,
+        }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         try:
-            Path(tmp_path).unlink(missing_ok=True)
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
         except Exception:
             pass
 

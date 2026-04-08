@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Square, Image, Video, ExternalLink, X } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
@@ -14,9 +14,9 @@ type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string; send
 function getSupportedMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;
   const candidates = [
+    'audio/ogg;codecs=opus',
     'audio/webm;codecs=opus',
     'audio/webm',
-    'audio/ogg;codecs=opus',
     'audio/mp4',
   ];
   for (const mt of candidates) {
@@ -50,6 +50,7 @@ const QueuePage = () => {
   const videoInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const shouldSendRecordingRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showAttach, setShowAttach] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -232,6 +233,18 @@ const QueuePage = () => {
     e.target.value = '';
   };
 
+  const stopRecording = (shouldSend: boolean) => {
+    shouldSendRecordingRef.current = shouldSend;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
   const startRecording = async () => {
     if (!currentChatId) return;
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -245,11 +258,13 @@ const QueuePage = () => {
         ? new MediaRecorder(stream, { mimeType })
         : new MediaRecorder(stream);
       chunksRef.current = [];
+      shouldSendRecordingRef.current = true;
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        if (chunksRef.current.length > 0 && currentChatId) {
-          const blob = new Blob(chunksRef.current, { type: 'audio/ogg' });
+        if (shouldSendRecordingRef.current && chunksRef.current.length > 0 && currentChatId) {
+          const recordedType = recorder.mimeType || chunksRef.current[0]?.type || 'audio/ogg';
+          const blob = new Blob(chunksRef.current, { type: recordedType });
           await sendMedia(currentChatId, blob, 'voice');
         }
       };
@@ -263,16 +278,19 @@ const QueuePage = () => {
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  };
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          shouldSendRecordingRef.current = false;
+          mediaRecorderRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   const getCurrentMessages = () => {
     const dialogNewMessages = newMessages[currentDialog.id] || [];
@@ -458,13 +476,17 @@ const QueuePage = () => {
           </div>
         )}
         {isRecording ? (
-          <div className="flex items-center gap-3 max-w-2xl mx-auto">
-            <div className="flex-1 flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-sm font-medium">{formatDuration(recordingTime)}</span>
+          <div className="flex items-center gap-2 max-w-2xl mx-auto rounded-full border border-border bg-muted/40 px-3 py-2">
+            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => stopRecording(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+            <div className="flex-1 flex items-center gap-2 min-w-0">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+              <span className="text-sm text-muted-foreground truncate">Запись голосового...</span>
+              <span className="text-sm font-medium ml-auto">{formatDuration(recordingTime)}</span>
             </div>
-            <Button variant="destructive" size="icon" onClick={stopRecording}>
-              <Square className="h-4 w-4" />
+            <Button type="button" size="icon" className="h-8 w-8 rounded-full" onClick={() => stopRecording(true)}>
+              <Send className="h-4 w-4" />
             </Button>
           </div>
         ) : (
