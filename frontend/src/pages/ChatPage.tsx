@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Send, Paperclip, Mic, Square, Image, Video, Sparkles } from 'lucide-react';
+import { ArrowLeft, Send, Paperclip, Mic, Square, Image, Video, Sparkles, X } from 'lucide-react';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { MediaType } from '@/types/telegram';
@@ -24,6 +24,21 @@ const formatDuration = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 };
 
+function getSupportedMimeType(): string {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4',
+  ];
+  for (const mt of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(mt)) return mt;
+    } catch { /* ignore */ }
+  }
+  return '';
+}
+
 const ChatPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -42,13 +57,28 @@ const ChatPage = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showAttach, setShowAttach] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const shouldScrollToBottomOnOpenRef = useRef(true);
+  const initialScrollDoneRef = useRef(false);
+
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewType, setPreviewType] = useState<MediaType>('photo');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewCaption, setPreviewCaption] = useState('');
 
   const numericChatId = parseInt(chatId || '0', 10);
   const shouldPreloadFull = !!(location.state as any)?.preloadFull;
   const contact = state.chats.find(c => c.id === numericChatId) || state.contacts?.find(c => c.id === numericChatId);
   const [remoteChatTitle, setRemoteChatTitle] = useState<string | null>(null);
   const chatTitle = contact?.title || remoteChatTitle || 'Загрузка...';
+
+  const scrollToBottom = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+    });
+  }, []);
 
   const preloadFullChatHistory = useCallback(async (targetChatId: number) => {
     const pageSize = 100;
@@ -68,22 +98,18 @@ const ChatPage = () => {
   }, [dispatch]);
 
   useEffect(() => {
-    if (!numericChatId) return;
-    shouldScrollToBottomOnOpenRef.current = true;
+    if (!numericChatId || !state.isInitialized) return;
+    initialScrollDoneRef.current = false;
     prevMsgCountRef.current = 0;
     const load = shouldPreloadFull ? preloadFullChatHistory(numericChatId) : loadMessages(numericChatId);
-    load.then(() => {
-      requestAnimationFrame(() => {
-        if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
-      });
-    }).catch(() => {});
+    load.then(() => scrollToBottom()).catch(() => {});
     if (!contact) {
       telegramApi.getChatInfo(numericChatId).then(info => {
         setRemoteChatTitle(info.title);
       }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numericChatId, shouldPreloadFull, preloadFullChatHistory]);
+  }, [numericChatId, shouldPreloadFull, preloadFullChatHistory, state.isInitialized]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -113,22 +139,17 @@ const ChatPage = () => {
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
-    if (shouldScrollToBottomOnOpenRef.current) {
-      shouldScrollToBottomOnOpenRef.current = false;
-      const raf = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-      return () => cancelAnimationFrame(raf);
+    if (!initialScrollDoneRef.current && messages.length > 0) {
+      initialScrollDoneRef.current = true;
+      scrollToBottom();
+      return;
     }
     const isNewMessage = messages.length > prevMsgCountRef.current;
     prevMsgCountRef.current = messages.length;
     if (isNewMessage || el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
-      const raf = requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-      return () => cancelAnimationFrame(raf);
+      scrollToBottom();
     }
-  }, [messages]);
+  }, [messages, scrollToBottom]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,23 +158,53 @@ const ChatPage = () => {
     setMessage('');
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
-    const file = e.target.files?.[0];
-    if (!file || !numericChatId) return;
-    await sendMedia(numericChatId, file, type);
+  const openPreview = (file: File, type: MediaType) => {
+    setPreviewFile(file);
+    setPreviewType(type);
+    setPreviewCaption('');
+    if (type === 'photo' || type === 'video') {
+      setPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setPreviewUrl(null);
+    }
     setShowAttach(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const closePreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewFile(null);
+    setPreviewUrl(null);
+    setPreviewCaption('');
+  };
+
+  const sendPreview = async () => {
+    if (!previewFile || !numericChatId) return;
+    const caption = previewCaption.trim() || undefined;
+    await sendMedia(numericChatId, previewFile, previewType, caption);
+    closePreview();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    openPreview(file, type);
+    e.target.value = '';
   };
 
   const startRecording = useCallback(async () => {
+    const mimeType = getSupportedMimeType();
+    if (!mimeType) {
+      console.error('No supported audio MIME type found');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        if (chunksRef.current.length > 0) {
+        if (chunksRef.current.length > 0 && numericChatId) {
           const blob = new Blob(chunksRef.current, { type: 'audio/ogg' });
           await sendMedia(numericChatId, blob, 'voice');
         }
@@ -163,8 +214,8 @@ const ChatPage = () => {
       setIsRecording(true);
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch {
-      console.error('Microphone access denied');
+    } catch (err) {
+      console.error('Microphone access denied', err);
     }
   }, [numericChatId, sendMedia]);
 
@@ -174,6 +225,15 @@ const ChatPage = () => {
     }
     setIsRecording(false);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+    };
   }, []);
 
   const handleGenerateReply = async () => {
@@ -207,6 +267,14 @@ const ChatPage = () => {
         return <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline mb-1 block">Скачать файл</a>;
     }
   };
+
+  if (!state.isInitialized) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Восстановление сессии...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -250,11 +318,48 @@ const ChatPage = () => {
         <div ref={bottomRef} />
       </div>
 
-      {/* Attachment menu */}
+      {/* Media Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={closePreview}>
+          <div className="bg-background rounded-xl shadow-2xl max-w-md w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm">
+                {previewType === 'photo' ? 'Отправить фото' : 'Отправить видео'}
+              </h3>
+              <Button variant="ghost" size="icon" onClick={closePreview}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex justify-center max-h-64 overflow-hidden rounded-lg bg-muted">
+              {previewType === 'photo' && previewUrl && (
+                <img src={previewUrl} alt="Preview" className="max-h-64 object-contain" />
+              )}
+              {previewType === 'video' && previewUrl && (
+                <video src={previewUrl} controls className="max-h-64 object-contain" />
+              )}
+            </div>
+            <Input
+              value={previewCaption}
+              onChange={e => setPreviewCaption(e.target.value)}
+              placeholder="Подпись (необязательно)"
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendPreview(); } }}
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={closePreview}>Отмена</Button>
+              <Button onClick={sendPreview}>
+                <Send className="h-4 w-4 mr-1" />
+                Отправить
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Message Input */}
       <div className="sticky bottom-0 z-10 bg-background border-t border-border p-4 relative">
-        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, 'photo')} />
-        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, 'video')} />
+        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileChange(e, 'photo')} />
+        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileChange(e, 'video')} />
         {showAttach && (
           <div className="absolute bottom-full mb-2 left-4 z-30 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => imageInputRef.current?.click()}>

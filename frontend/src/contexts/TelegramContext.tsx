@@ -10,6 +10,7 @@ interface TelegramState {
   messages: Record<number, Message[]>;
   activeChat?: Chat;
   isLoading: boolean;
+  isInitialized: boolean;
   error?: string;
   phoneCodeHash?: string;
   lastIncomingAt?: number;
@@ -29,6 +30,7 @@ type TelegramAction =
   | { type: 'ADD_MESSAGE'; payload: Message }
   | { type: 'SET_ACTIVE_CHAT'; payload: Chat }
   | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'SET_INITIALIZED' }
   | { type: 'SET_ERROR'; payload: string }
   | { type: 'CLEAR_ERROR' }
   | { type: 'LOGOUT' }
@@ -42,7 +44,8 @@ const initialState: TelegramState = {
   chats: [],
   contacts: [],
   messages: {},
-  isLoading: false
+  isLoading: false,
+  isInitialized: false,
 };
 
 const telegramReducer = (state: TelegramState, action: TelegramAction): TelegramState => {
@@ -98,6 +101,8 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
       return { ...state, activeChat: action.payload };
     case 'SET_LOADING':
       return { ...state, isLoading: action.payload };
+    case 'SET_INITIALIZED':
+      return { ...state, isInitialized: true };
     case 'SET_ERROR':
       return { ...state, error: action.payload, isLoading: false };
     case 'CLEAR_ERROR':
@@ -152,6 +157,8 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           return tryInit(retries - 1);
         }
         console.error('Ошибка инициализации:', error);
+      } finally {
+        dispatch({ type: 'SET_INITIALIZED' });
       }
     };
     await tryInit();

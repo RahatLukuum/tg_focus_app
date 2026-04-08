@@ -3,13 +3,34 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Square, Image, Video, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Square, Image, Video, ExternalLink, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { MediaType } from '@/types/telegram';
 
 type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string };
+
+function getSupportedMimeType(): string {
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4',
+  ];
+  for (const mt of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(mt)) return mt;
+    } catch { /* ignore */ }
+  }
+  return '';
+}
+
+const formatDuration = (s: number) => {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+};
 
 const QueuePage = () => {
   const navigate = useNavigate();
@@ -33,8 +54,12 @@ const QueuePage = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
 
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [previewType, setPreviewType] = useState<MediaType>('photo');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewCaption, setPreviewCaption] = useState('');
+
   useEffect(() => {
-    // Быстрый старт: одним запросом подтягиваем чаты, контакты и очередь.
     telegramApi.getBootstrap()
       .then((bootstrap) => {
         setQueueIds(bootstrap.queue);
@@ -47,9 +72,6 @@ const QueuePage = () => {
           loadChats().catch(() => {});
         }
       });
-    // моментально подтягивать очередь при каждом входящем событии
-    // сигнал приходит через TelegramContext: state.lastIncomingAt/state.lastIncomingChatId
-    // дополнительный легкий пуллинг реже как запасной механизм
     const int = setInterval(fetchQueue, 15000);
     return () => clearInterval(int);
   }, []);
@@ -66,7 +88,6 @@ const QueuePage = () => {
     };
   }, []);
 
-  // При фиксировании входящего сообщения — подтянуть очередь немедленно
   useEffect(() => {
     if (state.lastIncomingChatId) {
       fetchQueue();
@@ -78,13 +99,11 @@ const QueuePage = () => {
     try {
       const ids = await telegramApi.getQueue();
       setQueueIds(prev => {
-        // если есть новые id, добавим их в конец, сохраним текущий порядок
         const set = new Set(prev);
         const added: number[] = [];
         for (const id of ids) {
           if (!set.has(id)) added.push(id);
         }
-        // также если на бэке удалили — поддержим актуальность и порядок, оставив только пришедшие
         const filtered = prev.filter(id => ids.includes(id));
         return [...filtered, ...added];
       });
@@ -105,6 +124,7 @@ const QueuePage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChatId]);
+
   const history: UiMsg[] = useMemo(() => {
     const list = state.messages[currentChatId] || [];
     return list.map(m => ({
@@ -136,12 +156,10 @@ const QueuePage = () => {
     const next = !showHistory;
     setShowHistory(next);
     if (next && currentChatId) {
-      // при открытии истории сразу догружаем побольше сообщений
       loadMessages(currentChatId).then(() => loadOlderMessages(currentChatId)).catch(() => {});
     }
   };
 
-  // Scroll history to bottom when shown or updated
   useEffect(() => {
     if (!showHistory) return;
     const el = historyRef.current;
@@ -165,28 +183,58 @@ const QueuePage = () => {
     try {
       await sendMessage(currentChatId, message);
     } catch {
-      // ignore UI error here; error toast уже в контексте
+      // ignore
     }
   };
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
-    const file = e.target.files?.[0];
-    if (!file || !currentChatId) return;
-    await sendMedia(currentChatId, file, type);
+  const openPreview = (file: File, type: MediaType) => {
+    setPreviewFile(file);
+    setPreviewType(type);
+    setPreviewCaption('');
+    if (type === 'photo' || type === 'video') {
+      setPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setPreviewUrl(null);
+    }
     setShowAttach(false);
-    if (e.target) e.target.value = '';
+  };
+
+  const closePreview = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewFile(null);
+    setPreviewUrl(null);
+    setPreviewCaption('');
+  };
+
+  const sendPreview = async () => {
+    if (!previewFile || !currentChatId) return;
+    const caption = previewCaption.trim() || undefined;
+    await sendMedia(currentChatId, previewFile, previewType, caption);
+    closePreview();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    openPreview(file, type);
+    e.target.value = '';
   };
 
   const startRecording = async () => {
     if (!currentChatId) return;
+    const mimeType = getSupportedMimeType();
+    if (!mimeType) {
+      console.error('No supported audio MIME type found');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        if (chunksRef.current.length > 0) {
+        if (chunksRef.current.length > 0 && currentChatId) {
           const blob = new Blob(chunksRef.current, { type: 'audio/ogg' });
           await sendMedia(currentChatId, blob, 'voice');
         }
@@ -210,12 +258,6 @@ const QueuePage = () => {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-  };
-
-  const formatDuration = (s: number) => {
-    const m = Math.floor(s / 60);
-    const sec = Math.floor(s % 60);
-    return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
   const getCurrentMessages = () => {
@@ -264,22 +306,24 @@ const QueuePage = () => {
                   <p className="text-sm text-muted-foreground">{currentDialog.time}</p>
                 </div>
               </div>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={handleViewHistory}
-              >
-                <MessageCircle className="w-4 h-4 mr-2" />
-                {showHistory ? 'Скрыть историю' : 'История'}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate(`/chat/${currentChatId}`, { state: { preloadFull: true } })}
-              >
-                <ExternalLink className="w-4 h-4 mr-2" />
-                Открыть чат
-              </Button>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={handleViewHistory}
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  {showHistory ? 'Скрыть' : 'История'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/chat/${currentChatId}`, { state: { preloadFull: true } })}
+                >
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Открыть чат
+                </Button>
+              </div>
             </div>
 
             {/* Messages */}
@@ -308,7 +352,6 @@ const QueuePage = () => {
                       </div>
                     </div>
                   ))}
-                  {/* разделитель перед формой отправки */}
                   <div className="border-t border-border pt-3" />
                 </div>
               )}
@@ -343,10 +386,48 @@ const QueuePage = () => {
         </Card>
       </div>
 
+      {/* Media Preview Modal */}
+      {previewFile && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={closePreview}>
+          <div className="bg-background rounded-xl shadow-2xl max-w-md w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-sm">
+                {previewType === 'photo' ? 'Отправить фото' : 'Отправить видео'}
+              </h3>
+              <Button variant="ghost" size="icon" onClick={closePreview}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex justify-center max-h-64 overflow-hidden rounded-lg bg-muted">
+              {previewType === 'photo' && previewUrl && (
+                <img src={previewUrl} alt="Preview" className="max-h-64 object-contain" />
+              )}
+              {previewType === 'video' && previewUrl && (
+                <video src={previewUrl} controls className="max-h-64 object-contain" />
+              )}
+            </div>
+            <Input
+              value={previewCaption}
+              onChange={e => setPreviewCaption(e.target.value)}
+              placeholder="Подпись (необязательно)"
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendPreview(); } }}
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={closePreview}>Отмена</Button>
+              <Button onClick={sendPreview}>
+                <Send className="h-4 w-4 mr-1" />
+                Отправить
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Custom Message Input */}
       <div className="border-t border-border p-4 relative">
-        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, 'photo')} />
-        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, 'video')} />
+        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileChange(e, 'photo')} />
+        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileChange(e, 'video')} />
         {showAttach && (
           <div className="absolute bottom-full mb-2 left-4 z-30 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => imageInputRef.current?.click()}>
