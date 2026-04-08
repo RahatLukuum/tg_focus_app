@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Square, Image, Video, ExternalLink } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
+import { MediaType } from '@/types/telegram';
 
 type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string };
 
@@ -21,8 +22,16 @@ const QueuePage = () => {
     isOutgoing: boolean;
     time: string;
   }>>>({});
-  const { state, loadMessages, loadOlderMessages, sendMessage, loadChats, dispatch } = useTelegram();
+  const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, loadChats, dispatch } = useTelegram();
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showAttach, setShowAttach] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
 
   useEffect(() => {
     // Быстрый старт: одним запросом подтягиваем чаты, контакты и очередь.
@@ -43,6 +52,18 @@ const QueuePage = () => {
     // дополнительный легкий пуллинг реже как запасной механизм
     const int = setInterval(fetchQueue, 15000);
     return () => clearInterval(int);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch {}
+      }
+    };
   }, []);
 
   // При фиксировании входящего сообщения — подтянуть очередь немедленно
@@ -148,6 +169,55 @@ const QueuePage = () => {
     }
   };
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentChatId) return;
+    await sendMedia(currentChatId, file, type);
+    setShowAttach(false);
+    if (e.target) e.target.value = '';
+  };
+
+  const startRecording = async () => {
+    if (!currentChatId) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      chunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        if (chunksRef.current.length > 0) {
+          const blob = new Blob(chunksRef.current, { type: 'audio/ogg' });
+          await sendMedia(currentChatId, blob, 'voice');
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  };
+
+  const formatDuration = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
   const getCurrentMessages = () => {
     const dialogNewMessages = newMessages[currentDialog.id] || [];
     return dialogNewMessages;
@@ -201,6 +271,14 @@ const QueuePage = () => {
               >
                 <MessageCircle className="w-4 h-4 mr-2" />
                 {showHistory ? 'Скрыть историю' : 'История'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(`/chat/${currentChatId}`, { state: { preloadFull: true } })}
+              >
+                <ExternalLink className="w-4 h-4 mr-2" />
+                Открыть чат
               </Button>
             </div>
 
@@ -266,26 +344,59 @@ const QueuePage = () => {
       </div>
 
       {/* Custom Message Input */}
-      <div className="border-t border-border p-4">
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          const formData = new FormData(e.target as HTMLFormElement);
-          const message = formData.get('message') as string;
-          if (message.trim()) {
-            handleSendMessage(message.trim());
-            (e.target as HTMLFormElement).reset();
-          }
-        }} className={`flex gap-2 max-w-2xl mx-auto ${showHistory ? 'pointer-events-auto' : ''}`}>
-          <Input
-            name="message"
-            placeholder="Введите сообщение..."
-            className="flex-1"
-            autoComplete="off"
-          />
-          <Button type="submit" size="icon">
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
+      <div className="border-t border-border p-4 relative">
+        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, 'photo')} />
+        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, 'video')} />
+        {showAttach && (
+          <div className="absolute bottom-full mb-2 left-4 z-30 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => imageInputRef.current?.click()}>
+              <Image className="h-4 w-4 mr-1" />
+              Фото
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => videoInputRef.current?.click()}>
+              <Video className="h-4 w-4 mr-1" />
+              Видео
+            </Button>
+          </div>
+        )}
+        {isRecording ? (
+          <div className="flex items-center gap-3 max-w-2xl mx-auto">
+            <div className="flex-1 flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm font-medium">{formatDuration(recordingTime)}</span>
+            </div>
+            <Button variant="destructive" size="icon" onClick={stopRecording}>
+              <Square className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target as HTMLFormElement);
+            const message = String(formData.get('message') || '');
+            if (message.trim()) {
+              handleSendMessage(message.trim());
+              (e.target as HTMLFormElement).reset();
+            }
+          }} className={`flex gap-2 max-w-2xl mx-auto ${showHistory ? 'pointer-events-auto' : ''}`}>
+            <Button type="button" variant="ghost" size="icon" onClick={() => setShowAttach(v => !v)}>
+              <Paperclip className="h-4 w-4" />
+            </Button>
+            <Input
+              name="message"
+              placeholder="Введите сообщение..."
+              className="flex-1"
+              autoComplete="off"
+              onFocus={() => setShowAttach(false)}
+            />
+            <Button type="button" size="icon" variant="secondary" onClick={startRecording}>
+              <Mic className="h-4 w-4" />
+            </Button>
+            <Button type="submit" size="icon">
+              <Send className="h-4 w-4" />
+            </Button>
+          </form>
+        )}
       </div>
 
       {/* Action Buttons */}

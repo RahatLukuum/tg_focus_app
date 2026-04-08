@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -26,13 +26,15 @@ const formatDuration = (s: number) => {
 
 const ChatPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { chatId } = useParams();
   const [message, setMessage] = useState('');
-  const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia } = useTelegram();
+  const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, dispatch } = useTelegram();
   const listRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevMsgCountRef = useRef(0);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -40,16 +42,37 @@ const ChatPage = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showAttach, setShowAttach] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const shouldScrollToBottomOnOpenRef = useRef(true);
 
   const numericChatId = parseInt(chatId || '0', 10);
+  const shouldPreloadFull = !!(location.state as any)?.preloadFull;
   const contact = state.chats.find(c => c.id === numericChatId) || state.contacts?.find(c => c.id === numericChatId);
   const [remoteChatTitle, setRemoteChatTitle] = useState<string | null>(null);
   const chatTitle = contact?.title || remoteChatTitle || 'Загрузка...';
 
+  const preloadFullChatHistory = useCallback(async (targetChatId: number) => {
+    const pageSize = 100;
+    const maxPages = 30;
+    const firstBatch = await telegramApi.getMessages(targetChatId, pageSize);
+    let allMessages = [...firstBatch];
+    let beforeId = firstBatch[0]?.id;
+    let pagesLoaded = 0;
+    while (beforeId && pagesLoaded < maxPages) {
+      const older = await telegramApi.getOlderMessages(targetChatId, beforeId, pageSize);
+      if (!older.length) break;
+      allMessages = [...older, ...allMessages];
+      beforeId = older[0]?.id;
+      pagesLoaded += 1;
+    }
+    dispatch({ type: 'SET_MESSAGES', payload: { chatId: targetChatId, messages: allMessages } });
+  }, [dispatch]);
+
   useEffect(() => {
     if (!numericChatId) return;
+    shouldScrollToBottomOnOpenRef.current = true;
     prevMsgCountRef.current = 0;
-    loadMessages(numericChatId).then(() => {
+    const load = shouldPreloadFull ? preloadFullChatHistory(numericChatId) : loadMessages(numericChatId);
+    load.then(() => {
       requestAnimationFrame(() => {
         if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
       });
@@ -60,7 +83,7 @@ const ChatPage = () => {
       }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numericChatId]);
+  }, [numericChatId, shouldPreloadFull, preloadFullChatHistory]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -90,6 +113,13 @@ const ChatPage = () => {
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
+    if (shouldScrollToBottomOnOpenRef.current) {
+      shouldScrollToBottomOnOpenRef.current = false;
+      const raf = requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+      return () => cancelAnimationFrame(raf);
+    }
     const isNewMessage = messages.length > prevMsgCountRef.current;
     prevMsgCountRef.current = messages.length;
     if (isNewMessage || el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
@@ -221,28 +251,22 @@ const ChatPage = () => {
       </div>
 
       {/* Attachment menu */}
-      {showAttach && (
-        <div className="absolute bottom-20 left-4 z-20 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
-          <label className="cursor-pointer">
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, 'photo')} />
-            <div className="flex flex-col items-center p-2 rounded-md hover:bg-muted transition-colors">
-              <Image className="h-5 w-5" />
-              <span className="text-xs mt-1">Фото</span>
-            </div>
-          </label>
-          <label className="cursor-pointer">
-            <input type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, 'video')} />
-            <div className="flex flex-col items-center p-2 rounded-md hover:bg-muted transition-colors">
-              <Video className="h-5 w-5" />
-              <span className="text-xs mt-1">Видео</span>
-            </div>
-          </label>
-        </div>
-      )}
-
       {/* Message Input */}
-      <div className="sticky bottom-0 z-10 bg-background border-t border-border p-4">
-        <input ref={fileInputRef} type="file" className="hidden" />
+      <div className="sticky bottom-0 z-10 bg-background border-t border-border p-4 relative">
+        <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, 'photo')} />
+        <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, 'video')} />
+        {showAttach && (
+          <div className="absolute bottom-full mb-2 left-4 z-30 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => imageInputRef.current?.click()}>
+              <Image className="h-4 w-4 mr-1" />
+              Фото
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => videoInputRef.current?.click()}>
+              <Video className="h-4 w-4 mr-1" />
+              Видео
+            </Button>
+          </div>
+        )}
         {isRecording ? (
           <div className="flex items-center gap-3">
             <div className="flex-1 flex items-center gap-2">

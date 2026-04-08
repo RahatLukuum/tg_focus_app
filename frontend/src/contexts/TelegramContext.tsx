@@ -307,6 +307,10 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   const onWsEvent = (evt: any) => {
+    if (evt?.type === 'queue_update' && typeof evt.chat_id === 'number') {
+      dispatch({ type: 'INCOMING', payload: { chatId: evt.chat_id, at: Date.now() } });
+      return;
+    }
     if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {
       const mapped: Message = {
         id: evt.message.id,

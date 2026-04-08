@@ -172,6 +172,7 @@ async def incoming_handler(client: Client, message: Message):
         return
 
     ensure_in_queue(chat_id)
+    await broadcast({"type": "queue_update", "account": "", "chat_id": chat_id})
 
     preview_text = (message.text or message.caption or "").strip()
     author = None
@@ -272,6 +273,7 @@ def attach_incoming_handler(client: Client, account: str) -> None:
             return
 
         ensure_in_queue_for_account(account, message.chat.id)
+        await broadcast({"type": "queue_update", "account": account, "chat_id": message.chat.id})
 
         preview_text = (message.text or message.caption or "").strip()
         author = None
