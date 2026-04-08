@@ -167,34 +167,22 @@ class TelegramApiService {
   async getChats(): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson('/dialogs');
-    const chats: Chat[] = (res.dialogs || []).map((d: any) => ({
-      id: d.chat_id,
-      title: d.title || 'Без названия',
-      type: (d.type || 'private') as Chat['type'],
-      unreadCount: d.unread_count || 0,
-      lastMessage: d.last_message_text
-        ? {
-            id: Date.now(),
-            chatId: d.chat_id,
-            senderId: 0,
-            text: d.last_message_text,
-            date: new Date(),
-            isOutgoing: false,
-          }
-        : undefined,
-    }));
-    return chats;
+    return (res.dialogs || []).map((d: any) => this.mapDialogToChat(d));
   }
 
   async getContacts(): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson('/contacts');
-    return (res.contacts || []).map((c: any) => ({
-      id: c.chat_id,
-      title: c.title || 'Без названия',
-      type: 'private' as Chat['type'],
-      unreadCount: 0,
-    }));
+    return (res.contacts || []).map((c: any) => this.mapContactToChat(c));
+  }
+
+  async getBootstrap(): Promise<{ chats: Chat[]; contacts: Chat[]; queue: number[] }> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson('/bootstrap');
+    const chats = (res.dialogs || []).map((d: any) => this.mapDialogToChat(d));
+    const contacts = (res.contacts || []).map((c: any) => this.mapContactToChat(c));
+    const queue = Array.isArray(res.queue) ? res.queue : [];
+    return { chats, contacts, queue };
   }
 
   private mapMessage(m: any, chatId: number): Message {
@@ -407,6 +395,34 @@ class TelegramApiService {
     };
 
       return await attempt(this.baseUrl);
+  }
+
+  private mapDialogToChat(d: any): Chat {
+    return {
+      id: d.chat_id,
+      title: d.title || 'Без названия',
+      type: (d.type || 'private') as Chat['type'],
+      unreadCount: d.unread_count || 0,
+      lastMessage: d.last_message_text
+        ? {
+            id: Date.now(),
+            chatId: d.chat_id,
+            senderId: 0,
+            text: d.last_message_text,
+            date: new Date(),
+            isOutgoing: false,
+          }
+        : undefined,
+    };
+  }
+
+  private mapContactToChat(c: any): Chat {
+    return {
+      id: c.chat_id,
+      title: c.title || 'Без названия',
+      type: 'private' as Chat['type'],
+      unreadCount: 0,
+    };
   }
 
   // removed togglePort fallback to avoid unintended base switches

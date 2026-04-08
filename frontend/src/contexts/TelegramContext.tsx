@@ -243,12 +243,9 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const [dialogs, contactsList] = await Promise.all([
-        telegramApi.getChats(),
-        telegramApi.getContacts().catch(() => [] as Chat[]),
-      ]);
-      dispatch({ type: 'SET_CHATS', payload: dialogs });
-      dispatch({ type: 'SET_CONTACTS', payload: contactsList });
+      const bootstrap = await telegramApi.getBootstrap();
+      dispatch({ type: 'SET_CHATS', payload: bootstrap.chats });
+      dispatch({ type: 'SET_CONTACTS', payload: bootstrap.contacts });
     } catch (error: any) {
       console.error('Ошибка загрузки чатов:', error);
     } finally {

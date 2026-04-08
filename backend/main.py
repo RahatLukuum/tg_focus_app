@@ -328,6 +328,71 @@ async def ensure_client_connected(client: Client) -> None:
         await client.connect()
 
 
+async def get_authorized_client(account: str = "") -> Client:
+    client: Client
+    if account:
+        client = get_or_create_client(account)
+        await ensure_client_connected(client)
+    else:
+        await ensure_started()
+        client = bot
+    try:
+        await client.get_me()
+    except Exception:
+        raise HTTPException(status_code=401, detail="Not authorized")
+    return client
+
+
+def map_dialog_to_payload(d: Any) -> Optional[Dict[str, Any]]:
+    chat = getattr(d, "chat", None)
+    if not chat:
+        return None
+    try:
+        ctype = getattr(chat, "type", None)
+        type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
+    except Exception:
+        type_name = ""
+    if type_name not in ("private", "group", "supergroup"):
+        return None
+    last_text = (
+        (getattr(d.top_message, "text", None) or getattr(d.top_message, "caption", None) or "").strip()
+        if getattr(d, "top_message", None)
+        else None
+    )
+    if last_text == "":
+        last_text = None
+    title = getattr(chat, "title", None)
+    if not title:
+        first_name = getattr(chat, "first_name", None) or ""
+        last_name = getattr(chat, "last_name", None) or ""
+        title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat.id)
+    return {
+        "chat_id": chat.id,
+        "title": title,
+        "type": type_name,
+        "username": getattr(chat, "username", None),
+        "unread_count": getattr(d, "unread_messages_count", 0),
+        "last_message_text": last_text,
+    }
+
+
+async def build_dialogs_and_queue(client: Client, limit: int = 100) -> Dict[str, Any]:
+    dialogs: List[Dict[str, Any]] = []
+    queue_ids: List[int] = []
+    queue_seen: Set[int] = set()
+    async for d in client.get_dialogs(limit=limit):
+        item = map_dialog_to_payload(d)
+        if not item:
+            continue
+        dialogs.append(item)
+        if item["type"] == "private" and int(item.get("unread_count", 0) or 0) > 0:
+            cid = int(item["chat_id"])
+            if cid not in queue_seen:
+                queue_seen.add(cid)
+                queue_ids.append(cid)
+    return {"dialogs": dialogs, "queue": queue_ids}
+
+
 @app.on_event("shutdown")
 async def on_shutdown():
     try:
@@ -466,47 +531,32 @@ async def get_contacts(account: str = ""):
 
 @app.get("/dialogs")
 async def get_dialogs(limit: int = 100, account: str = ""):
-    client: Client
+    client = await get_authorized_client(account)
+    payload = await build_dialogs_and_queue(client, limit=limit)
+    return {"dialogs": payload["dialogs"]}
+
+
+@app.get("/bootstrap")
+async def get_bootstrap(limit: int = 100, account: str = ""):
+    client = await get_authorized_client(account)
+    dialogs_task = asyncio.create_task(build_dialogs_and_queue(client, limit=limit))
+    contacts_task = asyncio.create_task(get_contacts(account))
+    dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
+    queue_ids = dialogs_payload["queue"]
     if account:
-        client = get_or_create_client(account)
-        await ensure_client_connected(client)
+        async with queue_lock:
+            queued_chat_order_by_account[account] = list(queue_ids)
+            queued_chat_set_by_account[account] = set(queue_ids)
     else:
-        await ensure_started()
-        client = bot
-    # Проверим авторизацию, чтобы не провоцировать интерактивный вход
-    try:
-        await client.get_me()
-    except Exception:
-        raise HTTPException(status_code=401, detail="Not authorized")
-    dialogs: List[Dict[str, Any]] = []
-    async for d in client.get_dialogs(limit=limit):
-        chat = d.chat
-        try:
-            ctype = getattr(chat, "type", None)
-            type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
-        except Exception:
-            type_name = ""
-        if type_name not in ("private", "group", "supergroup"):
-            continue
-        last_text = (getattr(d.top_message, "text", None) or getattr(d.top_message, "caption", None) or "").strip() if getattr(d, "top_message", None) else None
-        if last_text == "":
-            last_text = None
-        title = getattr(chat, "title", None)
-        if not title:
-            first_name = getattr(chat, "first_name", None) or ""
-            last_name = getattr(chat, "last_name", None) or ""
-            title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat.id)
-        dialogs.append(
-            {
-                "chat_id": chat.id,
-                "title": title,
-                "type": type_name,
-                "username": getattr(chat, "username", None),
-                "unread_count": getattr(d, "unread_messages_count", 0),
-                "last_message_text": last_text,
-            }
-        )
-    return {"dialogs": dialogs}
+        queued_chat_order.clear()
+        queued_chat_set.clear()
+        for cid in queue_ids:
+            ensure_in_queue(cid)
+    return {
+        "dialogs": dialogs_payload["dialogs"],
+        "contacts": contacts_payload.get("contacts", []),
+        "queue": queue_ids,
+    }
 
 
 @app.get("/messages")
@@ -752,43 +802,28 @@ async def websocket_endpoint(ws: WebSocket):
 @app.get("/queue")
 async def get_queue(account: str = ""):
     if account:
-        try:
-            client = get_or_create_client(account)
-            await ensure_client_connected(client)
-            async for d in client.get_dialogs(limit=50):
-                unread = getattr(d, "unread_messages_count", 0)
-                chat = getattr(d, "chat", None)
-                if not chat:
-                    continue
-                try:
-                    ctype = getattr(chat, "type", None)
-                    type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
-                except Exception:
-                    type_name = ""
-                if unread and type_name == "private":
-                    async with queue_lock:
-                        ensure_in_queue_for_account(account, chat.id)
-        except Exception:
-            pass
+        if account not in queued_chat_order_by_account:
+            try:
+                client = await get_authorized_client(account)
+                payload = await build_dialogs_and_queue(client, limit=100)
+                async with queue_lock:
+                    queued_chat_order_by_account[account] = list(payload["queue"])
+                    queued_chat_set_by_account[account] = set(payload["queue"])
+            except Exception:
+                pass
         order = queued_chat_order_by_account.get(account, [])
         return {"queue": order}
     else:
-        try:
-            await ensure_started()
-            async for d in bot.get_dialogs(limit=50):
-                unread = getattr(d, "unread_messages_count", 0)
-                chat = getattr(d, "chat", None)
-                if not chat:
-                    continue
-                try:
-                    ctype = getattr(chat, "type", None)
-                    type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
-                except Exception:
-                    type_name = ""
-                if unread and type_name == "private":
-                    ensure_in_queue(chat.id)
-        except Exception:
-            pass
+        if not queued_chat_order:
+            try:
+                client = await get_authorized_client("")
+                payload = await build_dialogs_and_queue(client, limit=100)
+                queued_chat_order.clear()
+                queued_chat_set.clear()
+                for cid in payload["queue"]:
+                    ensure_in_queue(cid)
+            except Exception:
+                pass
         return {"queue": queued_chat_order}
 
 

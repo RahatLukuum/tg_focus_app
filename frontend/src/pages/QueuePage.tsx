@@ -21,15 +21,23 @@ const QueuePage = () => {
     isOutgoing: boolean;
     time: string;
   }>>>({});
-  const { state, loadMessages, loadOlderMessages, sendMessage, loadChats } = useTelegram();
+  const { state, loadMessages, loadOlderMessages, sendMessage, loadChats, dispatch } = useTelegram();
   const historyRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // начальная загрузка очереди
-    fetchQueue();
-    if (!state.chats || state.chats.length === 0) {
-      loadChats().catch(() => {});
-    }
+    // Быстрый старт: одним запросом подтягиваем чаты, контакты и очередь.
+    telegramApi.getBootstrap()
+      .then((bootstrap) => {
+        setQueueIds(bootstrap.queue);
+        dispatch({ type: 'SET_CHATS', payload: bootstrap.chats });
+        dispatch({ type: 'SET_CONTACTS', payload: bootstrap.contacts });
+      })
+      .catch(() => {
+        fetchQueue();
+        if (!state.chats || state.chats.length === 0) {
+          loadChats().catch(() => {});
+        }
+      });
     // моментально подтягивать очередь при каждом входящем событии
     // сигнал приходит через TelegramContext: state.lastIncomingAt/state.lastIncomingChatId
     // дополнительный легкий пуллинг реже как запасной механизм
