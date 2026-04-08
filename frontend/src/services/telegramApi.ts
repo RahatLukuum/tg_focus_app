@@ -206,6 +206,7 @@ class TelegramApiService {
       id: m.id,
       chatId,
       senderId: m.from_user_id || 0,
+      senderName: m.from_user_name || undefined,
       text: m.text || '',
       date: m.date ? new Date(m.date * 1000) : new Date(),
       isOutgoing: !!m.outgoing,
@@ -263,20 +264,28 @@ class TelegramApiService {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.detail || 'Upload failed');
     }
+    const data = await res.json().catch(() => ({}));
+    const messageId = data.message_id || Date.now();
+    const mediaPath = `/media/${chatId}/${messageId}`;
     const currentUser = await this.getCurrentUser();
     return {
-      id: Date.now(),
+      id: messageId,
       chatId,
       senderId: currentUser.id,
       text: caption || '',
       date: new Date(),
       isOutgoing: true,
       mediaType,
+      mediaUrl: this.baseUrl + this.withAccountQuery(mediaPath),
     };
   }
 
   getMediaUrl(path: string): string {
     return this.baseUrl + this.withAccountQuery(path);
+  }
+
+  getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   async getChatInfo(chatId: number): Promise<Chat> {

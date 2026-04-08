@@ -13,6 +13,7 @@ type UiMsg = {
   text: string;
   isOutgoing: boolean;
   time: string;
+  senderName?: string;
   mediaType?: MediaType;
   mediaUrl?: string;
   duration?: number;
@@ -24,7 +25,8 @@ const formatDuration = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 };
 
-function getSupportedMimeType(): string {
+function getSupportedMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined;
   const candidates = [
     'audio/webm;codecs=opus',
     'audio/webm',
@@ -36,7 +38,7 @@ function getSupportedMimeType(): string {
       if (MediaRecorder.isTypeSupported(mt)) return mt;
     } catch { /* ignore */ }
   }
-  return '';
+  return undefined;
 }
 
 const ChatPage = () => {
@@ -63,6 +65,7 @@ const ChatPage = () => {
   const [previewType, setPreviewType] = useState<MediaType>('photo');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewCaption, setPreviewCaption] = useState('');
+  const [isSendingMedia, setIsSendingMedia] = useState(false);
 
   const numericChatId = parseInt(chatId || '0', 10);
   const shouldPreloadFull = !!(location.state as any)?.preloadFull;
@@ -71,13 +74,9 @@ const ChatPage = () => {
   const chatTitle = contact?.title || remoteChatTitle || 'Загрузка...';
 
   const scrollToBottom = useCallback(() => {
-    const el = listRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    });
+    setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior });
+    }, 50);
   }, []);
 
   const preloadFullChatHistory = useCallback(async (targetChatId: number) => {
@@ -123,6 +122,8 @@ const ChatPage = () => {
     return () => el.removeEventListener('scroll', onScroll);
   }, [numericChatId, loadOlderMessages]);
 
+  const isGroup = contact?.type === 'group' || contact?.type === 'supergroup';
+
   const messages = useMemo<UiMsg[]>(() => {
     const list = state.messages[numericChatId] || [];
     return list.map(m => ({
@@ -130,18 +131,20 @@ const ChatPage = () => {
       text: m.text,
       isOutgoing: m.isOutgoing,
       time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      senderName: isGroup && !m.isOutgoing ? m.senderName : undefined,
       mediaType: m.mediaType,
       mediaUrl: m.mediaUrl,
       duration: m.duration,
     }));
-  }, [state.messages, numericChatId]);
+  }, [state.messages, numericChatId, isGroup]);
 
   useEffect(() => {
     const el = listRef.current;
-    if (!el) return;
-    if (!initialScrollDoneRef.current && messages.length > 0) {
+    if (!el || messages.length === 0) return;
+    if (!initialScrollDoneRef.current) {
       initialScrollDoneRef.current = true;
       scrollToBottom();
+      setTimeout(scrollToBottom, 200);
       return;
     }
     const isNewMessage = messages.length > prevMsgCountRef.current;
@@ -178,10 +181,17 @@ const ChatPage = () => {
   };
 
   const sendPreview = async () => {
-    if (!previewFile || !numericChatId) return;
-    const caption = previewCaption.trim() || undefined;
-    await sendMedia(numericChatId, previewFile, previewType, caption);
-    closePreview();
+    if (!previewFile || !numericChatId || isSendingMedia) return;
+    setIsSendingMedia(true);
+    try {
+      const caption = previewCaption.trim() || undefined;
+      await sendMedia(numericChatId, previewFile, previewType, caption);
+      closePreview();
+    } catch (err) {
+      console.error('Media send error:', err);
+    } finally {
+      setIsSendingMedia(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
@@ -192,14 +202,16 @@ const ChatPage = () => {
   };
 
   const startRecording = useCallback(async () => {
-    const mimeType = getSupportedMimeType();
-    if (!mimeType) {
-      console.error('No supported audio MIME type found');
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      console.error('MediaRecorder or getUserMedia not available');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const mimeType = getSupportedMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
@@ -305,6 +317,9 @@ const ChatPage = () => {
                   : 'bg-muted'
               }`}
             >
+              {msg.senderName && (
+                <p className="text-xs font-semibold text-blue-500 mb-0.5">{msg.senderName}</p>
+              )}
               {renderMedia(msg)}
               {msg.text && <p className="text-sm">{msg.text}</p>}
               <p className={`text-xs mt-1 ${
@@ -346,10 +361,10 @@ const ChatPage = () => {
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={closePreview}>Отмена</Button>
-              <Button onClick={sendPreview}>
+              <Button variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
+              <Button onClick={sendPreview} disabled={isSendingMedia}>
                 <Send className="h-4 w-4 mr-1" />
-                Отправить
+                {isSendingMedia ? 'Отправка...' : 'Отправить'}
               </Button>
             </div>
           </div>

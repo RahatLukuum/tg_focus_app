@@ -9,9 +9,10 @@ import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { MediaType } from '@/types/telegram';
 
-type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string };
+type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string; senderName?: string };
 
-function getSupportedMimeType(): string {
+function getSupportedMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') return undefined;
   const candidates = [
     'audio/webm;codecs=opus',
     'audio/webm',
@@ -23,7 +24,7 @@ function getSupportedMimeType(): string {
       if (MediaRecorder.isTypeSupported(mt)) return mt;
     } catch { /* ignore */ }
   }
-  return '';
+  return undefined;
 }
 
 const formatDuration = (s: number) => {
@@ -58,6 +59,7 @@ const QueuePage = () => {
   const [previewType, setPreviewType] = useState<MediaType>('photo');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewCaption, setPreviewCaption] = useState('');
+  const [isSendingMedia, setIsSendingMedia] = useState(false);
 
   useEffect(() => {
     telegramApi.getBootstrap()
@@ -125,15 +127,18 @@ const QueuePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChatId]);
 
+  const isGroupChat = currentChat?.type === 'group' || currentChat?.type === 'supergroup';
+
   const history: UiMsg[] = useMemo(() => {
     const list = state.messages[currentChatId] || [];
     return list.map(m => ({
       id: m.id,
       text: m.text,
       isOutgoing: m.isOutgoing,
-      time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+      time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      senderName: isGroupChat && !m.isOutgoing ? m.senderName : undefined,
     }));
-  }, [state.messages, currentChatId]);
+  }, [state.messages, currentChatId, isGroupChat]);
 
   const currentDialog = currentChatId ? {
     id: currentChatId,
@@ -207,10 +212,17 @@ const QueuePage = () => {
   };
 
   const sendPreview = async () => {
-    if (!previewFile || !currentChatId) return;
-    const caption = previewCaption.trim() || undefined;
-    await sendMedia(currentChatId, previewFile, previewType, caption);
-    closePreview();
+    if (!previewFile || !currentChatId || isSendingMedia) return;
+    setIsSendingMedia(true);
+    try {
+      const caption = previewCaption.trim() || undefined;
+      await sendMedia(currentChatId, previewFile, previewType, caption);
+      closePreview();
+    } catch (err) {
+      console.error('Media send error:', err);
+    } finally {
+      setIsSendingMedia(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
@@ -222,14 +234,16 @@ const QueuePage = () => {
 
   const startRecording = async () => {
     if (!currentChatId) return;
-    const mimeType = getSupportedMimeType();
-    if (!mimeType) {
-      console.error('No supported audio MIME type found');
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      console.error('MediaRecorder or getUserMedia not available');
       return;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const mimeType = getSupportedMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       chunksRef.current = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = async () => {
@@ -244,8 +258,8 @@ const QueuePage = () => {
       setIsRecording(true);
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('Recording error', err);
     }
   };
 
@@ -343,6 +357,9 @@ const QueuePage = () => {
                             : 'bg-muted'
                         }`}
                       >
+                        {message.senderName && (
+                          <p className="text-xs font-semibold text-blue-500 mb-0.5">{message.senderName}</p>
+                        )}
                         <p>{message.text}</p>
                         <p className={`text-xs mt-1 ${
                           message.isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'
@@ -414,10 +431,10 @@ const QueuePage = () => {
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={closePreview}>Отмена</Button>
-              <Button onClick={sendPreview}>
+              <Button variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
+              <Button onClick={sendPreview} disabled={isSendingMedia}>
                 <Send className="h-4 w-4 mr-1" />
-                Отправить
+                {isSendingMedia ? 'Отправка...' : 'Отправить'}
               </Button>
             </div>
           </div>

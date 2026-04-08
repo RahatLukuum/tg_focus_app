@@ -159,10 +159,39 @@ async def broadcast(event: Dict[str, Any]) -> None:
             pass
 
 
+def _extract_media_info(message: Message) -> Dict[str, Any]:
+    media_type = None
+    file_name = None
+    duration = None
+    if message.photo:
+        media_type = "photo"
+    elif message.video:
+        media_type = "video"
+        duration = getattr(message.video, "duration", None)
+        file_name = getattr(message.video, "file_name", None)
+    elif message.voice:
+        media_type = "voice"
+        duration = getattr(message.voice, "duration", None)
+    elif message.video_note:
+        media_type = "video"
+        duration = getattr(message.video_note, "duration", None)
+    elif message.document:
+        media_type = "document"
+        file_name = getattr(message.document, "file_name", None)
+    result: Dict[str, Any] = {}
+    if media_type:
+        result["media_type"] = media_type
+        result["media_url"] = f"/media/{message.chat.id}/{message.id}"
+        if file_name:
+            result["file_name"] = file_name
+        if duration is not None:
+            result["duration"] = duration
+    return result
+
+
 @bot.on_message(filters.incoming & ~filters.service)
 async def incoming_handler(client: Client, message: Message):
     chat_id = message.chat.id
-    # filter: only private chats
     try:
         ctype = getattr(message.chat, "type", None)
         type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
@@ -175,6 +204,7 @@ async def incoming_handler(client: Client, message: Message):
     await broadcast({"type": "queue_update", "account": "", "chat_id": chat_id})
 
     preview_text = (message.text or message.caption or "").strip()
+    media_info = _extract_media_info(message)
     author = None
     try:
         if message.from_user:
@@ -184,21 +214,23 @@ async def incoming_handler(client: Client, message: Message):
     except Exception:
         author = None
 
-    # Не шлём пустые текстовые сообщения в realtime, но сохраняем чат в очереди выше
-    if preview_text:
+    if preview_text or media_info:
+        msg_payload: Dict[str, Any] = {
+            "id": message.id,
+            "text": preview_text,
+            "date": int(message.date.timestamp()) if message.date else None,
+            "from_user_id": message.from_user.id if message.from_user else None,
+            "from_user_name": author,
+            "outgoing": message.outgoing,
+        }
+        msg_payload.update(media_info)
         await broadcast(
             {
                 "type": "message",
                 "account": "",
                 "chat_id": chat_id,
                 "chat_title": message.chat.title if getattr(message.chat, "title", None) else author or "",
-                "message": {
-                    "id": message.id,
-                    "text": preview_text,
-                    "date": int(message.date.timestamp()) if message.date else None,
-                    "from_user_id": message.from_user.id if message.from_user else None,
-                    "outgoing": message.outgoing,
-                },
+                "message": msg_payload,
             }
         )
 
@@ -276,6 +308,7 @@ def attach_incoming_handler(client: Client, account: str) -> None:
         await broadcast({"type": "queue_update", "account": account, "chat_id": message.chat.id})
 
         preview_text = (message.text or message.caption or "").strip()
+        media_info = _extract_media_info(message)
         author = None
         try:
             if message.from_user:
@@ -285,20 +318,23 @@ def attach_incoming_handler(client: Client, account: str) -> None:
         except Exception:
             author = None
 
-        if preview_text:
+        if preview_text or media_info:
+            msg_payload: Dict[str, Any] = {
+                "id": message.id,
+                "text": preview_text,
+                "date": int(message.date.timestamp()) if message.date else None,
+                "from_user_id": message.from_user.id if message.from_user else None,
+                "from_user_name": author,
+                "outgoing": message.outgoing,
+            }
+            msg_payload.update(media_info)
             await broadcast(
                 {
                     "type": "message",
                     "account": account,
                     "chat_id": message.chat.id,
                     "chat_title": message.chat.title if getattr(message.chat, "title", None) else author or "",
-                    "message": {
-                        "id": message.id,
-                        "text": preview_text,
-                        "date": int(message.date.timestamp()) if message.date else None,
-                        "from_user_id": message.from_user.id if message.from_user else None,
-                        "outgoing": message.outgoing,
-                    },
+                    "message": msg_payload,
                 }
             )
 
@@ -602,11 +638,20 @@ async def get_messages(chat_id: int, limit: int = 50, before_id: Optional[int] =
             file_name = getattr(m.document, "file_name", None)
         if not text_content and not media_type:
             continue
+        sender_name = None
+        if not m.outgoing:
+            if m.from_user:
+                first = getattr(m.from_user, "first_name", None) or ""
+                last = getattr(m.from_user, "last_name", None) or ""
+                sender_name = (first + (" " + last if last else "")).strip() or None
+            elif getattr(m, "sender_chat", None):
+                sender_name = getattr(m.sender_chat, "title", None)
         entry: Dict[str, Any] = {
             "id": m.id,
             "text": text_content,
             "date": int(m.date.timestamp()) if m.date else None,
             "from_user_id": m.from_user.id if m.from_user else None,
+            "from_user_name": sender_name,
             "outgoing": m.outgoing,
         }
         if media_type:

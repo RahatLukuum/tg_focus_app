@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +44,20 @@ const AuthPage = () => {
     } catch (_) {}
   };
 
+  useEffect(() => {
+    if (state.auth.isAuthenticated) {
+      navigate('/home', { replace: true });
+    }
+  }, [state.auth.isAuthenticated, navigate]);
+
+  if (state.auth.isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Загрузка...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <Card className="w-full max-w-md p-8">
@@ -54,12 +68,10 @@ const AuthPage = () => {
             className="w-full"
             onClick={async () => {
               try {
-                // просто попробуем сходить за /me через контекстную инициализацию
-                await loadChats(); // если уже авторизованы, подтянет чаты
+                await loadChats();
                 if (state.auth.isAuthenticated) {
                   navigate('/home');
                 } else {
-                  // триггерим стандартный setConfig->/me в провайдере
                   window.location.reload();
                 }
               } catch {}

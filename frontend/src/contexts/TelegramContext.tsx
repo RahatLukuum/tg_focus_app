@@ -319,14 +319,24 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
     if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {
+      const m = evt.message;
       const mapped: Message = {
-        id: evt.message.id,
+        id: m.id,
         chatId: evt.chat_id,
-        senderId: evt.message.from_user_id || 0,
-        text: evt.message.text || '',
-        date: evt.message.date ? new Date(evt.message.date * 1000) : new Date(),
-        isOutgoing: !!evt.message.outgoing,
+        senderId: m.from_user_id || 0,
+        senderName: m.from_user_name || undefined,
+        text: m.text || '',
+        date: m.date ? new Date(m.date * 1000) : new Date(),
+        isOutgoing: !!m.outgoing,
       };
+      if (m.media_type) {
+        mapped.mediaType = m.media_type;
+        if (m.media_url) {
+          mapped.mediaUrl = telegramApi.getMediaUrl(m.media_url);
+        }
+        if (m.file_name) mapped.fileName = m.file_name;
+        if (m.duration != null) mapped.duration = m.duration;
+      }
       dispatch({ type: 'ADD_MESSAGE', payload: mapped });
       if (!mapped.isOutgoing) {
         dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });

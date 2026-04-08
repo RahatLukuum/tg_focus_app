@@ -29,6 +29,7 @@ export interface Message {
   id: number;
   chatId: number;
   senderId: number;
+  senderName?: string;
   text: string;
   date: Date;
   isOutgoing: boolean;
