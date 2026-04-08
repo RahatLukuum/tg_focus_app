@@ -6,6 +6,7 @@ interface TelegramState {
   config?: TelegramConfig;
   auth: AuthState;
   chats: Chat[];
+  contacts: Chat[];
   messages: Record<number, Message[]>;
   activeChat?: Chat;
   isLoading: boolean;
@@ -22,6 +23,7 @@ type TelegramAction =
   | { type: 'SET_PHONE'; payload: string }
   | { type: 'SET_PHONE_CODE_HASH'; payload: string }
   | { type: 'SET_CHATS'; payload: Chat[] }
+  | { type: 'SET_CONTACTS'; payload: Chat[] }
   | { type: 'SET_MESSAGES'; payload: { chatId: number; messages: Message[] } }
   | { type: 'PREPEND_MESSAGES'; payload: { chatId: number; messages: Message[] } }
   | { type: 'ADD_MESSAGE'; payload: Message }
@@ -38,6 +40,7 @@ const initialState: TelegramState = {
     authStep: 'phone'
   },
   chats: [],
+  contacts: [],
   messages: {},
   isLoading: false
 };
@@ -59,6 +62,8 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
       return { ...state, phoneCodeHash: action.payload };
     case 'SET_CHATS':
       return { ...state, chats: action.payload };
+    case 'SET_CONTACTS':
+      return { ...state, contacts: action.payload };
     case 'SET_MESSAGES':
       return { 
         ...state, 
@@ -124,27 +129,32 @@ const TelegramContext = createContext<TelegramContextType | undefined>(undefined
 export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(telegramReducer, initialState);
   const wsRef = useRef<WebSocket | null>(null);
+  const wsReconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wsBackoff = useRef(1000);
 
   const setConfig = async (config: TelegramConfig) => {
     dispatch({ type: 'SET_CONFIG', payload: config });
     localStorage.setItem('telegram_config', JSON.stringify(config));
     
-    try {
-      await telegramApi.initialize(config);
-      
-      // Check if already authenticated
-      const isAuth = await telegramApi.checkAuth();
-      if (isAuth) {
-        const user = await telegramApi.getCurrentUser();
-        dispatch({ type: 'SET_USER', payload: user });
-        await loadChats();
-        // open websocket for updates
-        openWebSocket();
+    const tryInit = async (retries = 3): Promise<void> => {
+      try {
+        await telegramApi.initialize(config);
+        const isAuth = await telegramApi.checkAuth();
+        if (isAuth) {
+          const user = await telegramApi.getCurrentUser();
+          dispatch({ type: 'SET_USER', payload: user });
+          await loadChats();
+          openWebSocket();
+        }
+      } catch (error: any) {
+        if (retries > 0) {
+          await new Promise(r => setTimeout(r, 2000));
+          return tryInit(retries - 1);
+        }
+        console.error('Ошибка инициализации:', error);
       }
-    } catch (error: any) {
-      console.error('Ошибка инициализации:', error);
-      dispatch({ type: 'SET_ERROR', payload: error.message });
-    }
+    };
+    await tryInit();
   };
 
   const sendCode = async (phoneNumber: string) => {
@@ -233,16 +243,14 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
-      const [dialogs, contacts] = await Promise.all([
+      const [dialogs, contactsList] = await Promise.all([
         telegramApi.getChats(),
         telegramApi.getContacts().catch(() => [] as Chat[]),
       ]);
-      const seen = new Set(dialogs.map(d => d.id));
-      const merged = [...dialogs, ...contacts.filter(c => !seen.has(c.id))];
-      dispatch({ type: 'SET_CHATS', payload: merged });
+      dispatch({ type: 'SET_CHATS', payload: dialogs });
+      dispatch({ type: 'SET_CONTACTS', payload: contactsList });
     } catch (error: any) {
       console.error('Ошибка загрузки чатов:', error);
-      dispatch({ type: 'SET_ERROR', payload: error.message || 'Ошибка загрузки чатов' });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -254,7 +262,6 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       dispatch({ type: 'SET_MESSAGES', payload: { chatId, messages } });
     } catch (error: any) {
       console.error('Ошибка загрузки сообщений:', error);
-      dispatch({ type: 'SET_ERROR', payload: error.message || 'Ошибка загрузки сообщений' });
     }
   };
 
@@ -302,29 +309,54 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   }, []);
 
-  const openWebSocket = () => {
-    if (wsRef.current) return;
-    wsRef.current = telegramApi.connectWebSocket((evt) => {
-      if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {
-        const mapped: Message = {
-          id: evt.message.id,
-          chatId: evt.chat_id,
-          senderId: evt.message.from_user_id || 0,
-          text: evt.message.text || '',
-          date: evt.message.date ? new Date(evt.message.date * 1000) : new Date(),
-          isOutgoing: !!evt.message.outgoing,
-        };
-        dispatch({ type: 'ADD_MESSAGE', payload: mapped });
-        // сигнализируем страницам о новом входящем сообщении в конкретный чат
-        if (!mapped.isOutgoing) {
-          dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });
-        }
+  const onWsEvent = (evt: any) => {
+    if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {
+      const mapped: Message = {
+        id: evt.message.id,
+        chatId: evt.chat_id,
+        senderId: evt.message.from_user_id || 0,
+        text: evt.message.text || '',
+        date: evt.message.date ? new Date(evt.message.date * 1000) : new Date(),
+        isOutgoing: !!evt.message.outgoing,
+      };
+      dispatch({ type: 'ADD_MESSAGE', payload: mapped });
+      if (!mapped.isOutgoing) {
+        dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });
       }
+    }
+  };
+
+  const openWebSocket = () => {
+    if (wsReconnectTimer.current) { clearTimeout(wsReconnectTimer.current); wsReconnectTimer.current = null; }
+    if (wsRef.current) {
+      try { wsRef.current.close(); } catch {}
+      wsRef.current = null;
+    }
+
+    const ws = telegramApi.connectWebSocket(onWsEvent);
+
+    ws.addEventListener('open', () => {
+      wsBackoff.current = 1000;
     });
+
+    ws.addEventListener('close', () => {
+      wsRef.current = null;
+      wsReconnectTimer.current = setTimeout(() => {
+        wsBackoff.current = Math.min(wsBackoff.current * 2, 15000);
+        openWebSocket();
+      }, wsBackoff.current);
+    });
+
+    ws.addEventListener('error', () => {
+      try { ws.close(); } catch {}
+    });
+
+    wsRef.current = ws;
   };
 
   useEffect(() => {
     return () => {
+      if (wsReconnectTimer.current) clearTimeout(wsReconnectTimer.current);
       if (wsRef.current) {
         try { wsRef.current.close(); } catch {}
         wsRef.current = null;

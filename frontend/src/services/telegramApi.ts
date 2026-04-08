@@ -167,15 +167,10 @@ class TelegramApiService {
   async getChats(): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson('/dialogs');
-    const chats: Chat[] = (res.dialogs || [])
-      .filter((d: any) => {
-        const t = (d.type || '').toString().toLowerCase();
-        return t === 'private';
-      })
-      .map((d: any) => ({
+    const chats: Chat[] = (res.dialogs || []).map((d: any) => ({
       id: d.chat_id,
       title: d.title || 'Без названия',
-      type: d.type as Chat['type'],
+      type: (d.type || 'private') as Chat['type'],
       unreadCount: d.unread_count || 0,
       lastMessage: d.last_message_text
         ? {
@@ -278,6 +273,16 @@ class TelegramApiService {
 
   getMediaUrl(path: string): string {
     return this.baseUrl + this.withAccountQuery(path);
+  }
+
+  async getChatInfo(chatId: number): Promise<Chat> {
+    const res = await this.fetchJson(`/chat_info?chat_id=${encodeURIComponent(chatId)}`);
+    const c = res.chat || {};
+    return {
+      id: c.chat_id || chatId,
+      title: c.title || String(chatId),
+      type: (c.type || 'private') as Chat['type'],
+    };
   }
 
   async generateReply(chatId: number, prompt?: string): Promise<string> {

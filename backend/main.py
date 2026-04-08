@@ -481,22 +481,26 @@ async def get_dialogs(limit: int = 100, account: str = ""):
     dialogs: List[Dict[str, Any]] = []
     async for d in client.get_dialogs(limit=limit):
         chat = d.chat
-        # filter: only private chats
         try:
             ctype = getattr(chat, "type", None)
             type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
         except Exception:
             type_name = ""
-        if type_name != "private":
+        if type_name not in ("private", "group", "supergroup"):
             continue
         last_text = (getattr(d.top_message, "text", None) or getattr(d.top_message, "caption", None) or "").strip() if getattr(d, "top_message", None) else None
         if last_text == "":
             last_text = None
+        title = getattr(chat, "title", None)
+        if not title:
+            first_name = getattr(chat, "first_name", None) or ""
+            last_name = getattr(chat, "last_name", None) or ""
+            title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat.id)
         dialogs.append(
             {
                 "chat_id": chat.id,
-                "title": getattr(chat, "title", None) or (getattr(chat, "first_name", None) or "") + (" " + chat.last_name if getattr(chat, "last_name", None) else ""),
-                "type": chat.type.value if hasattr(chat.type, "value") else str(chat.type),
+                "title": title,
+                "type": type_name,
                 "username": getattr(chat, "username", None),
                 "unread_count": getattr(d, "unread_messages_count", 0),
                 "last_message_text": last_text,
@@ -747,17 +751,15 @@ async def websocket_endpoint(ws: WebSocket):
 
 @app.get("/queue")
 async def get_queue(account: str = ""):
-    # Топап очереди непрочитанными диалогами (добавляем недостающие даже если очередь не пуста)
     if account:
         try:
             client = get_or_create_client(account)
             await ensure_client_connected(client)
-            async for d in client.get_dialogs():
+            async for d in client.get_dialogs(limit=50):
                 unread = getattr(d, "unread_messages_count", 0)
                 chat = getattr(d, "chat", None)
                 if not chat:
                     continue
-                # filter only private
                 try:
                     ctype = getattr(chat, "type", None)
                     type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")
@@ -773,12 +775,11 @@ async def get_queue(account: str = ""):
     else:
         try:
             await ensure_started()
-            async for d in bot.get_dialogs():
+            async for d in bot.get_dialogs(limit=50):
                 unread = getattr(d, "unread_messages_count", 0)
                 chat = getattr(d, "chat", None)
                 if not chat:
                     continue
-                # filter only private
                 try:
                     ctype = getattr(chat, "type", None)
                     type_name = getattr(ctype, "value", None) or (str(ctype).lower() if ctype is not None else "")

@@ -13,6 +13,15 @@ interface TodoItem {
 
 const STORAGE_KEY = 'tg_focus_todos';
 
+let _idCounter = 0;
+const genId = (): string => {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now()}-${++_idCounter}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+};
+
 const loadTodos = (): TodoItem[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -28,7 +37,7 @@ const saveTodos = (todos: TodoItem[]) => {
 
 const TodoPage = () => {
   const navigate = useNavigate();
-  const [todos, setTodos] = useState<TodoItem[]>(loadTodos);
+  const [todos, setTodos] = useState<TodoItem[]>(() => loadTodos());
   const [newText, setNewText] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
 
@@ -37,7 +46,7 @@ const TodoPage = () => {
   const addTodo = useCallback(() => {
     const text = newText.trim();
     if (!text) return;
-    setTodos(prev => [...prev, { id: crypto.randomUUID(), text, done: false, createdAt: Date.now() }]);
+    setTodos(prev => [...prev, { id: genId(), text, done: false, createdAt: Date.now() }]);
     setNewText('');
   }, [newText]);
 

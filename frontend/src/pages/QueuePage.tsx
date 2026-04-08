@@ -63,10 +63,16 @@ const QueuePage = () => {
   };
 
   const currentChatId = queueIds[currentIndex];
-  const currentChat = state.chats.find(c => c.id === currentChatId);
+  const currentChat = state.chats.find(c => c.id === currentChatId) || state.contacts?.find(c => c.id === currentChatId);
+  const [chatTitles, setChatTitles] = useState<Record<number, string>>({});
+
   useEffect(() => {
-    if (currentChatId) {
-      loadMessages(currentChatId).catch(() => {});
+    if (!currentChatId) return;
+    loadMessages(currentChatId).catch(() => {});
+    if (!currentChat && !chatTitles[currentChatId]) {
+      telegramApi.getChatInfo(currentChatId).then(info => {
+        setChatTitles(prev => ({ ...prev, [currentChatId]: info.title }));
+      }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChatId]);
@@ -82,7 +88,7 @@ const QueuePage = () => {
 
   const currentDialog = currentChatId ? {
     id: currentChatId,
-    name: currentChat?.title || `Чат ${currentChatId}`,
+    name: currentChat?.title || chatTitles[currentChatId] || `Чат ${currentChatId}`,
     lastMessage: history.at(-1)?.text || '',
     time: history.at(-1)?.time || '',
   } : undefined as any;

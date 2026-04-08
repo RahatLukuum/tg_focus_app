@@ -42,7 +42,9 @@ const ChatPage = () => {
   const [isGenerating, setIsGenerating] = useState(false);
 
   const numericChatId = parseInt(chatId || '0', 10);
-  const contact = state.chats.find(c => c.id === numericChatId);
+  const contact = state.chats.find(c => c.id === numericChatId) || state.contacts?.find(c => c.id === numericChatId);
+  const [remoteChatTitle, setRemoteChatTitle] = useState<string | null>(null);
+  const chatTitle = contact?.title || remoteChatTitle || 'Загрузка...';
 
   useEffect(() => {
     if (!numericChatId) return;
@@ -52,6 +54,11 @@ const ChatPage = () => {
         if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
       });
     }).catch(() => {});
+    if (!contact) {
+      telegramApi.getChatInfo(numericChatId).then(info => {
+        setRemoteChatTitle(info.title);
+      }).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numericChatId]);
 
@@ -179,11 +186,10 @@ const ChatPage = () => {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <Avatar className="h-8 w-8">
-          <AvatarFallback>{contact?.title?.[0] || 'U'}</AvatarFallback>
+          <AvatarFallback>{chatTitle[0] || 'U'}</AvatarFallback>
         </Avatar>
         <div className="flex-1 min-w-0">
-          <h1 className="font-semibold truncate">{contact?.title || 'Неизвестный контакт'}</h1>
-          <p className="text-xs text-muted-foreground">в сети</p>
+          <h1 className="font-semibold truncate">{chatTitle}</h1>
         </div>
       </div>
 
