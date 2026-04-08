@@ -40,7 +40,7 @@ git push origin "$BRANCH" || error "Не удалось запушить"
 # === 2. Деплой на VPS по SSH ===
 info "Подключаюсь к VPS..."
 
-ssh "${VPS_USER}@${VPS_HOST}" bash -s -- "$VPS_PROJECT" "$VPS_WEBROOT" "$BRANCH" << 'REMOTE_SCRIPT'
+ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=30 "${VPS_USER}@${VPS_HOST}" bash -s -- "$VPS_PROJECT" "$VPS_WEBROOT" "$BRANCH" << 'REMOTE_SCRIPT'
 set -euo pipefail
 
 PROJECT="$1"
