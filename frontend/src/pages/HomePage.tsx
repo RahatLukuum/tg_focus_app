@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { MessageSquare, Users, LogOut, ListTodo } from 'lucide-react';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
@@ -51,16 +50,13 @@ const HomePage = () => {
             </Button>
             
             <Button 
-              className="w-full h-16 text-lg px-6 gap-3"
+              className="w-full h-16 text-lg flex items-center justify-center gap-3"
               onClick={() => navigate('/queue')}
             >
               <Users className="w-6 h-6 shrink-0" />
-              <span className="flex-1 text-left">Разбор очереди</span>
-              {queueCount > 0 && (
-                <Badge variant="secondary" className="min-w-[1.75rem] justify-center tabular-nums shrink-0">
-                  {queueCount}
-                </Badge>
-              )}
+              <span className="tabular-nums">
+                Разбор очереди ({queueCount})
+              </span>
             </Button>
 
             <Button 
