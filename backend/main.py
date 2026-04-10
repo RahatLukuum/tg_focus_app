@@ -730,9 +730,10 @@ async def get_media(chat_id: int, message_id: int, account: str = ""):
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    buf = io.BytesIO()
     try:
-        await client_obj.download_media(msg, file_name=buf)
+        buf = await client_obj.download_media(msg, in_memory=True)
+        if buf is None:
+            raise HTTPException(status_code=404, detail="Failed to download media")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     buf.seek(0)
@@ -766,6 +767,12 @@ async def api_send_media(
     else:
         await ensure_started()
         client_obj = bot
+
+    if not client_obj.me:
+        try:
+            await client_obj.get_me()
+        except Exception:
+            pass
 
     tmp_path: Optional[str] = None
     suffix = Path(file.filename or "file").suffix

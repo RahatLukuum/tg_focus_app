@@ -98,7 +98,17 @@ import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { MediaType } from '@/types/telegram';
 
-type UiMsg = { id: number; text: string; isOutgoing: boolean; time: string; senderName?: string };
+type UiMsg = {
+  id: number;
+  text: string;
+  isOutgoing: boolean;
+  time: string;
+  senderName?: string;
+  mediaType?: MediaType;
+  mediaUrl?: string;
+  duration?: number;
+  fileName?: string;
+};
 
 function getSupportedMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined;
@@ -221,8 +231,33 @@ const QueuePage = () => {
       isOutgoing: m.isOutgoing,
       time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
       senderName: isGroupChat && !m.isOutgoing ? m.senderName : undefined,
+      mediaType: m.mediaType,
+      mediaUrl: m.mediaUrl,
+      duration: m.duration,
+      fileName: m.fileName,
     }));
   }, [state.messages, currentChatId, isGroupChat]);
+
+  const [fullscreenMedia, setFullscreenMedia] = useState<{url: string, type: MediaType} | null>(null);
+
+  const renderMedia = (msg: UiMsg) => {
+    if (!msg.mediaType || !msg.mediaUrl) return null;
+    switch (msg.mediaType) {
+      case 'photo':
+        return <img src={msg.mediaUrl} alt="" className="max-w-full max-h-64 rounded-md mb-1 cursor-pointer object-cover" loading="lazy" onClick={() => setFullscreenMedia({url: msg.mediaUrl!, type: 'photo'})} />;
+      case 'video':
+        return <video src={`${msg.mediaUrl}#t=0.001`} controls playsInline className="max-w-full max-h-64 rounded-md mb-1 bg-black/10 cursor-pointer" preload="metadata" onClick={(e) => { e.preventDefault(); setFullscreenMedia({url: msg.mediaUrl!, type: 'video'}); }} />;
+      case 'voice':
+        return <VoiceMessage url={msg.mediaUrl} duration={msg.duration} />;
+      default:
+        return (
+          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 bg-background/50 rounded-md border border-border hover:bg-background/80 transition-colors mb-1 max-w-full">
+            <Paperclip className="h-4 w-4 shrink-0" />
+            <span className="text-sm truncate">{msg.fileName || 'Скачать файл'}</span>
+          </a>
+        );
+    }
+  };
 
   const currentDialog = currentChatId ? {
     id: currentChatId,
@@ -462,6 +497,7 @@ const QueuePage = () => {
                         {message.senderName && (
                           <p className="text-xs font-semibold text-blue-500 mb-0.5">{message.senderName}</p>
                         )}
+                        {renderMedia(message)}
                         <p>{message.text}</p>
                         <p className={`text-xs mt-1 ${
                           message.isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'
@@ -631,6 +667,31 @@ const QueuePage = () => {
           </Button>
         </div>
       </div>
+
+      {/* Fullscreen Media Viewer */}
+      {fullscreenMedia && (
+        <div 
+          className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setFullscreenMedia(null)}
+        >
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="absolute top-4 right-4 text-white hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); setFullscreenMedia(null); }}
+          >
+            <X className="h-6 w-6" />
+          </Button>
+          <div className="max-w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
+            {fullscreenMedia.type === 'photo' && (
+              <img src={fullscreenMedia.url} alt="Fullscreen" className="max-w-full max-h-[90vh] object-contain" />
+            )}
+            {fullscreenMedia.type === 'video' && (
+              <video src={`${fullscreenMedia.url}#t=0.001`} controls autoPlay playsInline className="max-w-full max-h-[90vh] object-contain" />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

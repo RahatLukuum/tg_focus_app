@@ -1,9 +1,99 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useTelegram } from '@/contexts/TelegramContext';
-import { Message } from '@/types/telegram';
+import { Message, MediaType } from '@/types/telegram';
 import { cn } from '@/lib/utils';
+import { Play, Pause, Paperclip, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
+const formatDuration = (s: number) => {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+};
+
+const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.preload = 'metadata';
+
+    const updateProgress = () => {
+      setCurrentTime(audio.currentTime);
+      setProgress((audio.currentTime / (audio.duration || 1)) * 100);
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener('timeupdate', updateProgress);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateProgress);
+      audio.removeEventListener('ended', handleEnded);
+      audio.pause();
+    };
+  }, [url]);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current) return;
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    const percentage = x / bounds.width;
+    const newTime = percentage * (audioRef.current.duration || 0);
+    audioRef.current.currentTime = newTime;
+    setProgress(percentage * 100);
+  };
+
+  return (
+    <div className="flex items-center gap-3 mb-1 min-w-[200px]">
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon"
+        className="h-10 w-10 rounded-full shrink-0"
+        onClick={togglePlay}
+      >
+        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-1" />}
+      </Button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div 
+          className="h-1.5 w-full bg-primary/20 rounded-full cursor-pointer relative"
+          onClick={handleSeek}
+        >
+          <div 
+            className="absolute top-0 left-0 h-full bg-primary rounded-full transition-all duration-75"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[10px] opacity-70">
+          <span>{formatDuration(currentTime)}</span>
+          <span>{duration != null ? formatDuration(duration) : ''}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface MessageListProps {
   chatId: number;
@@ -64,6 +154,27 @@ export const MessageList: React.FC<MessageListProps> = ({ chatId }) => {
     return senderId === state.auth.user?.id ? 'Я' : 'U';
   };
 
+  const [fullscreenMedia, setFullscreenMedia] = useState<{url: string, type: MediaType} | null>(null);
+
+  const renderMedia = (msg: Message) => {
+    if (!msg.mediaType || !msg.mediaUrl) return null;
+    switch (msg.mediaType) {
+      case 'photo':
+        return <img src={msg.mediaUrl} alt="" className="max-w-full max-h-64 rounded-md mb-1 cursor-pointer object-cover" loading="lazy" onClick={() => setFullscreenMedia({url: msg.mediaUrl!, type: 'photo'})} />;
+      case 'video':
+        return <video src={`${msg.mediaUrl}#t=0.001`} controls playsInline className="max-w-full max-h-64 rounded-md mb-1 bg-black/10 cursor-pointer" preload="metadata" onClick={(e) => { e.preventDefault(); setFullscreenMedia({url: msg.mediaUrl!, type: 'video'}); }} />;
+      case 'voice':
+        return <VoiceMessage url={msg.mediaUrl} duration={msg.duration} />;
+      default:
+        return (
+          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 bg-background/50 rounded-md border border-border hover:bg-background/80 transition-colors mb-1 max-w-full">
+            <Paperclip className="h-4 w-4 shrink-0" />
+            <span className="text-sm truncate">{msg.fileName || 'Скачать файл'}</span>
+          </a>
+        );
+    }
+  };
+
   return (
     <ScrollArea className="h-full" ref={scrollRef}>
       <div className="p-4 space-y-2">
@@ -99,6 +210,7 @@ export const MessageList: React.FC<MessageListProps> = ({ chatId }) => {
                     : "bg-muted"
                 )}
               >
+                {renderMedia(message)}
                 <p className="text-sm">{message.text}</p>
                 <div className={cn(
                   "flex items-center gap-1 mt-1",
@@ -129,6 +241,31 @@ export const MessageList: React.FC<MessageListProps> = ({ chatId }) => {
           </div>
         )}
       </div>
+
+      {/* Fullscreen Media Viewer */}
+      {fullscreenMedia && (
+        <div 
+          className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setFullscreenMedia(null)}
+        >
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="absolute top-4 right-4 text-white hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); setFullscreenMedia(null); }}
+          >
+            <X className="h-6 w-6" />
+          </Button>
+          <div className="max-w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
+            {fullscreenMedia.type === 'photo' && (
+              <img src={fullscreenMedia.url} alt="Fullscreen" className="max-w-full max-h-[90vh] object-contain" />
+            )}
+            {fullscreenMedia.type === 'video' && (
+              <video src={`${fullscreenMedia.url}#t=0.001`} controls autoPlay playsInline className="max-w-full max-h-[90vh] object-contain" />
+            )}
+          </div>
+        </div>
+      )}
     </ScrollArea>
   );
 };
