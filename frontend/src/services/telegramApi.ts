@@ -262,7 +262,7 @@ class TelegramApiService {
       : mediaType === 'video'
         ? '.mp4'
         : mediaType === 'voice'
-          ? (fileType.includes('webm') ? '.webm' : '.ogg')
+          ? '.ogg'
           : '.bin';
     form.append('file', file, `upload${ext}`);
     const url = this.baseUrl + this.withAccountQuery('/send_media');
@@ -274,11 +274,19 @@ class TelegramApiService {
     const data = await res.json().catch(() => ({}));
     const messageId = data.message_id || Date.now();
     const mediaPath = `/media/${chatId}/${messageId}`;
-    const currentUser = await this.getCurrentUser();
+    
+    let senderId = 0;
+    try {
+      const currentUser = await this.getCurrentUser();
+      senderId = currentUser.id;
+    } catch {
+      // ignore
+    }
+
     return {
       id: messageId,
       chatId,
-      senderId: currentUser.id,
+      senderId,
       text: caption || '',
       date: new Date(),
       isOutgoing: true,

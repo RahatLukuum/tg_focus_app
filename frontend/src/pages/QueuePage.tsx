@@ -3,7 +3,96 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause } from 'lucide-react';
+import { toast } from 'sonner';
+
+const formatDuration = (s: number) => {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+};
+
+const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.preload = 'metadata';
+
+    const updateProgress = () => {
+      setCurrentTime(audio.currentTime);
+      setProgress((audio.currentTime / (audio.duration || 1)) * 100);
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener('timeupdate', updateProgress);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateProgress);
+      audio.removeEventListener('ended', handleEnded);
+      audio.pause();
+    };
+  }, [url]);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current) return;
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    const percentage = x / bounds.width;
+    const newTime = percentage * (audioRef.current.duration || 0);
+    audioRef.current.currentTime = newTime;
+    setProgress(percentage * 100);
+  };
+
+  return (
+    <div className="flex items-center gap-3 mb-1 min-w-[200px]">
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon"
+        className="h-10 w-10 rounded-full shrink-0"
+        onClick={togglePlay}
+      >
+        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-1" />}
+      </Button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div 
+          className="h-1.5 w-full bg-primary/20 rounded-full cursor-pointer relative"
+          onClick={handleSeek}
+        >
+          <div 
+            className="absolute top-0 left-0 h-full bg-primary rounded-full transition-all duration-75"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[10px] opacity-70">
+          <span>{formatDuration(currentTime)}</span>
+          <span>{duration != null ? formatDuration(duration) : ''}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
@@ -26,12 +115,6 @@ function getSupportedMimeType(): string | undefined {
   }
   return undefined;
 }
-
-const formatDuration = (s: number) => {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-};
 
 const QueuePage = () => {
   const navigate = useNavigate();
@@ -219,8 +302,9 @@ const QueuePage = () => {
       const caption = previewCaption.trim() || undefined;
       await sendMedia(currentChatId, previewFile, previewType, caption);
       closePreview();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Media send error:', err);
+      toast.error(err.message || 'Ошибка отправки медиа');
     } finally {
       setIsSendingMedia(false);
     }
@@ -449,8 +533,8 @@ const QueuePage = () => {
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
-              <Button onClick={sendPreview} disabled={isSendingMedia}>
+              <Button type="button" variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
+              <Button type="button" onClick={sendPreview} disabled={isSendingMedia}>
                 <Send className="h-4 w-4 mr-1" />
                 {isSendingMedia ? 'Отправка...' : 'Отправить'}
               </Button>

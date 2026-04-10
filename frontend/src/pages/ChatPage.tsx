@@ -3,7 +3,90 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Send, Paperclip, Mic, Image, Video, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Send, Paperclip, Mic, Image, Video, Sparkles, X, Play, Pause } from 'lucide-react';
+import { toast } from 'sonner';
+
+const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.preload = 'metadata';
+
+    const updateProgress = () => {
+      setCurrentTime(audio.currentTime);
+      setProgress((audio.currentTime / (audio.duration || 1)) * 100);
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener('timeupdate', updateProgress);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateProgress);
+      audio.removeEventListener('ended', handleEnded);
+      audio.pause();
+    };
+  }, [url]);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current) return;
+    const bounds = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - bounds.left;
+    const percentage = x / bounds.width;
+    const newTime = percentage * (audioRef.current.duration || 0);
+    audioRef.current.currentTime = newTime;
+    setProgress(percentage * 100);
+  };
+
+  return (
+    <div className="flex items-center gap-3 mb-1 min-w-[200px]">
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon"
+        className="h-10 w-10 rounded-full shrink-0"
+        onClick={togglePlay}
+      >
+        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-1" />}
+      </Button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div 
+          className="h-1.5 w-full bg-primary/20 rounded-full cursor-pointer relative"
+          onClick={handleSeek}
+        >
+          <div 
+            className="absolute top-0 left-0 h-full bg-primary rounded-full transition-all duration-75"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[10px] opacity-70">
+          <span>{formatDuration(currentTime)}</span>
+          <span>{duration != null ? formatDuration(duration) : ''}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { MediaType } from '@/types/telegram';
@@ -188,8 +271,9 @@ const ChatPage = () => {
       const caption = previewCaption.trim() || undefined;
       await sendMedia(numericChatId, previewFile, previewType, caption);
       closePreview();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Media send error:', err);
+      toast.error(err.message || 'Ошибка отправки медиа');
     } finally {
       setIsSendingMedia(false);
     }
@@ -272,16 +356,11 @@ const ChatPage = () => {
     if (!msg.mediaType || !msg.mediaUrl) return null;
     switch (msg.mediaType) {
       case 'photo':
-        return <img src={msg.mediaUrl} alt="" className="max-w-full rounded-md mb-1 cursor-pointer" loading="lazy" onClick={() => window.open(msg.mediaUrl, '_blank')} />;
+        return <img src={msg.mediaUrl} alt="" className="max-w-full rounded-md mb-1 cursor-pointer object-cover" loading="lazy" onClick={() => window.open(msg.mediaUrl, '_blank')} />;
       case 'video':
-        return <video src={msg.mediaUrl} controls className="max-w-full rounded-md mb-1" preload="metadata" />;
+        return <video src={`${msg.mediaUrl}#t=0.001`} controls playsInline className="max-w-full rounded-md mb-1 bg-black/10" preload="metadata" />;
       case 'voice':
-        return (
-          <div className="flex items-center gap-2 mb-1">
-            <audio src={msg.mediaUrl} controls className="h-8 max-w-[200px]" preload="metadata" />
-            {msg.duration != null && <span className="text-xs opacity-70">{formatDuration(msg.duration)}</span>}
-          </div>
-        );
+        return <VoiceMessage url={msg.mediaUrl} duration={msg.duration} />;
       default:
         return <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-xs underline mb-1 block">Скачать файл</a>;
     }
@@ -368,8 +447,8 @@ const ChatPage = () => {
               autoFocus
             />
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
-              <Button onClick={sendPreview} disabled={isSendingMedia}>
+              <Button type="button" variant="outline" onClick={closePreview} disabled={isSendingMedia}>Отмена</Button>
+              <Button type="button" onClick={sendPreview} disabled={isSendingMedia}>
                 <Send className="h-4 w-4 mr-1" />
                 {isSendingMedia ? 'Отправка...' : 'Отправить'}
               </Button>
