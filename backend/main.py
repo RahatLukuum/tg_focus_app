@@ -768,9 +768,9 @@ async def api_send_media(
         await ensure_started()
         client_obj = bot
 
-    if not client_obj.me:
+    if not getattr(client_obj, "me", None):
         try:
-            await client_obj.get_me()
+            client_obj.me = await client_obj.get_me()
         except Exception:
             pass
 

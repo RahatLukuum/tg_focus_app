@@ -298,6 +298,7 @@ const ChatPage = () => {
   const startRecording = useCallback(async () => {
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       console.error('MediaRecorder or getUserMedia not available');
+      toast.error('Запись аудио недоступна в этом браузере или требуется HTTPS');
       return;
     }
     try {
@@ -322,8 +323,9 @@ const ChatPage = () => {
       setIsRecording(true);
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Microphone access denied', err);
+      toast.error('Ошибка доступа к микрофону: ' + (err.message || 'Разрешите доступ в браузере'));
     }
   }, [numericChatId, sendMedia]);
 

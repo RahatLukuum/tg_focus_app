@@ -368,6 +368,7 @@ const QueuePage = () => {
     if (!currentChatId) return;
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       console.error('MediaRecorder or getUserMedia not available');
+      toast.error('Запись аудио недоступна в этом браузере или требуется HTTPS');
       return;
     }
     try {
@@ -392,8 +393,9 @@ const QueuePage = () => {
       setIsRecording(true);
       setRecordingTime(0);
       timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Recording error', err);
+      toast.error('Ошибка доступа к микрофону: ' + (err.message || 'Разрешите доступ в браузере'));
     }
   };
 
