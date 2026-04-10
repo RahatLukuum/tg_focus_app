@@ -15,6 +15,8 @@ interface TelegramState {
   phoneCodeHash?: string;
   lastIncomingAt?: number;
   lastIncomingChatId?: number;
+  /** Увеличивается при событиях, влияющих на /queue (WS, действия в очереди) — для обновления счётчика без поллинга */
+  queueRevision: number;
 }
 
 type TelegramAction =
@@ -34,7 +36,8 @@ type TelegramAction =
   | { type: 'SET_ERROR'; payload: string }
   | { type: 'CLEAR_ERROR' }
   | { type: 'LOGOUT' }
-  | { type: 'INCOMING'; payload: { chatId: number; at: number } };
+  | { type: 'INCOMING'; payload: { chatId: number; at: number } }
+  | { type: 'QUEUE_DIRTY' };
 
 const initialState: TelegramState = {
   auth: {
@@ -46,6 +49,7 @@ const initialState: TelegramState = {
   messages: {},
   isLoading: false,
   isInitialized: false,
+  queueRevision: 0,
 };
 
 const telegramReducer = (state: TelegramState, action: TelegramAction): TelegramState => {
@@ -97,6 +101,8 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
       };
     case 'INCOMING':
       return { ...state, lastIncomingChatId: action.payload.chatId, lastIncomingAt: action.payload.at };
+    case 'QUEUE_DIRTY':
+      return { ...state, queueRevision: state.queueRevision + 1 };
     case 'SET_ACTIVE_CHAT':
       return { ...state, activeChat: action.payload };
     case 'SET_LOADING':
@@ -317,6 +323,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const onWsEvent = (evt: any) => {
     if (evt?.type === 'queue_update' && typeof evt.chat_id === 'number') {
       dispatch({ type: 'INCOMING', payload: { chatId: evt.chat_id, at: Date.now() } });
+      dispatch({ type: 'QUEUE_DIRTY' });
       return;
     }
     if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {

@@ -1,11 +1,33 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { MessageSquare, Users, LogOut, ListTodo } from 'lucide-react';
+import { useTelegram } from '@/contexts/TelegramContext';
+import { telegramApi } from '@/services/telegramApi';
 
 const HomePage = () => {
   const navigate = useNavigate();
+  const { state } = useTelegram();
+  const [queueCount, setQueueCount] = useState(0);
+
+  useEffect(() => {
+    if (!state.auth.isAuthenticated || !state.isInitialized) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const q = await telegramApi.getQueue();
+        if (!cancelled) setQueueCount(Array.isArray(q) ? q.length : 0);
+      } catch {
+        if (!cancelled) setQueueCount(0);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.queueRevision, state.isInitialized, state.auth.isAuthenticated]);
 
   const handleLogout = () => {
     navigate('/');
@@ -29,11 +51,16 @@ const HomePage = () => {
             </Button>
             
             <Button 
-              className="w-full h-16 text-lg"
+              className="w-full h-16 text-lg px-6 gap-3"
               onClick={() => navigate('/queue')}
             >
-              <Users className="w-6 h-6 mr-3" />
-              Разбор очереди
+              <Users className="w-6 h-6 shrink-0" />
+              <span className="flex-1 text-left">Разбор очереди</span>
+              {queueCount > 0 && (
+                <Badge variant="secondary" className="min-w-[1.75rem] justify-center tabular-nums shrink-0">
+                  {queueCount}
+                </Badge>
+              )}
             </Button>
 
             <Button 

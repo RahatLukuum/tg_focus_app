@@ -168,8 +168,6 @@ const QueuePage = () => {
           loadChats().catch(() => {});
         }
       });
-    const int = setInterval(fetchQueue, 15000);
-    return () => clearInterval(int);
   }, []);
 
   useEffect(() => {
@@ -183,13 +181,6 @@ const QueuePage = () => {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (state.lastIncomingChatId) {
-      fetchQueue();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.lastIncomingAt, state.lastIncomingChatId]);
 
   const fetchQueue = async () => {
     try {
@@ -205,6 +196,12 @@ const QueuePage = () => {
       });
     } catch {}
   };
+
+  useEffect(() => {
+    if (state.queueRevision === 0) return;
+    fetchQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.queueRevision]);
 
   const currentChatId = queueIds[currentIndex];
   const currentChat = state.chats.find(c => c.id === currentChatId) || state.contacts?.find(c => c.id === currentChatId);
@@ -273,6 +270,7 @@ const QueuePage = () => {
       const newQueue = await telegramApi.queueAction(currentChatId, map[action] as any);
       setQueueIds(newQueue);
       setCurrentIndex(i => Math.min(i, Math.max(0, (newQueue.length - 1))));
+      dispatch({ type: 'QUEUE_DIRTY' });
     } catch {}
   };
 
@@ -434,13 +432,20 @@ const QueuePage = () => {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <div className="border-b border-border p-4 flex items-center justify-between">
+      <div className="border-b border-border p-4 flex items-center justify-between gap-2">
         <Button variant="ghost" size="icon" onClick={() => navigate('/home')}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="font-semibold">Разбор очереди</h1>
-        <div className="text-sm text-muted-foreground">
-          {currentIndex + 1} из {queueIds.length}
+        <div className="flex-1 min-w-0 text-center">
+          <h1 className="font-semibold leading-tight">Разбор очереди</h1>
+          {queueIds.length > 0 && (
+            <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
+              В очереди: {queueIds.length}
+            </p>
+          )}
+        </div>
+        <div className="text-sm text-muted-foreground tabular-nums shrink-0 w-[4.5rem] text-right">
+          {queueIds.length > 0 ? `${currentIndex + 1} / ${queueIds.length}` : '—'}
         </div>
       </div>
 
