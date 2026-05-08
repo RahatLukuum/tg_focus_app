@@ -67,9 +67,9 @@ def make_router(
             if error_type == "overloaded_error":
                 raise HTTPException(status_code=503, detail="Claude overloaded")
             raise HTTPException(status_code=502, detail=f"Claude API error: {e.message}")
-        except Exception as e:
+        except Exception:
             logger.exception("Claude unexpected error")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Internal error")
 
         if not reply:
             raise HTTPException(status_code=500, detail="Empty response from Claude")

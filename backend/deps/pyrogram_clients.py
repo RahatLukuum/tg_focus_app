@@ -80,4 +80,4 @@ class PyrogramClientManager:
             try:
                 await c.stop()
             except Exception:
-                pass
+                logger.warning("client.stop() failed during shutdown", exc_info=True)

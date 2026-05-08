@@ -5,6 +5,7 @@ Plan 2 alongside folder filtering.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pyrogram import Client
@@ -13,6 +14,8 @@ from pyrogram.types import Message
 from services.media_utils import extract_media_info
 from services.queue_service import QueueService
 from ws.broadcaster import Broadcaster
+
+logger = logging.getLogger(__name__)
 
 
 def make_incoming_handler(
@@ -28,6 +31,7 @@ def make_incoming_handler(
                 or (str(ctype).lower() if ctype is not None else "")
             )
         except Exception:
+            logger.debug("type detection failed in incoming handler, falling through", exc_info=True)
             type_name = ""
         if type_name != "private":
             return
@@ -83,5 +87,6 @@ def _format_author(message: Message) -> str | None:
         if message.sender_chat:
             return message.sender_chat.title
     except Exception:
+        logger.debug("author lookup failed in incoming handler, returning None", exc_info=True)
         return None
     return None

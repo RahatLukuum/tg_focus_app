@@ -1,6 +1,7 @@
 """Message history, send, media (download/upload)."""
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -12,6 +13,8 @@ from pyrogram import Client
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from services.media_utils import extract_media_info
+
+logger = logging.getLogger(__name__)
 
 
 def _format_sender(m) -> Optional[str]:
@@ -113,7 +116,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
             try:
                 client.me = await client.get_me()
             except Exception:
-                pass
+                logger.warning("get_me() failed in send_media, proceeding without me", exc_info=True)
 
         suffix = Path(file.filename or "file").suffix
         if not suffix:
@@ -148,13 +151,14 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
+            logger.warning("send_media failed: %s", e)
             raise HTTPException(status_code=400, detail=str(e))
         finally:
             try:
                 if tmp_path:
                     Path(tmp_path).unlink(missing_ok=True)
             except Exception:
-                pass
+                logger.warning("failed to delete tmp file %s", tmp_path, exc_info=True)
 
     @router.post("/send_message")
     async def api_send_message(payload: dict[str, Any]):
@@ -172,6 +176,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
             )
             return {"ok": True, "message_id": sent.id}
         except Exception as e:
+            logger.warning("send_message to chat %s failed: %s", chat_id, e)
             raise HTTPException(status_code=400, detail=str(e))
 
     return router

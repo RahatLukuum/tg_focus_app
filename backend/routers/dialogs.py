@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any, Optional
 
@@ -11,6 +12,8 @@ from pyrogram import Client
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from services.queue_service import QueueService
+
+logger = logging.getLogger(__name__)
 
 try:
     from pyrogram.raw.functions.contacts import ImportContacts  # type: ignore
@@ -31,6 +34,7 @@ def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
             or (str(ctype).lower() if ctype is not None else "")
         )
     except Exception:
+        logger.debug("type detection failed in _map_dialog, falling through", exc_info=True)
         type_name = ""
     if type_name not in ("private", "group", "supergroup"):
         return None
@@ -106,6 +110,7 @@ async def _resolve_user_by_phone(client: Client, phone: str) -> Optional[int]:
             if uid:
                 return int(uid)
     except Exception:
+        logger.warning("ImportContacts failed for phone %s", phone, exc_info=True)
         return None
     return None
 
@@ -141,7 +146,7 @@ def make_router(
                     }
                 )
         except Exception:
-            pass
+            logger.warning("get_contacts() failed, returning empty contacts", exc_info=True)
         return out
 
     @router.get("/contacts")
@@ -174,6 +179,7 @@ def make_router(
         try:
             ch = await client.get_chat(chat_id)
         except Exception as e:
+            logger.warning("get_chat(%s) failed: %s", chat_id, e)
             raise HTTPException(status_code=404, detail=str(e))
         try:
             ctype = getattr(ch, "type", None)
@@ -182,6 +188,7 @@ def make_router(
                 or (str(ctype).lower() if ctype is not None else "")
             )
         except Exception:
+            logger.debug("type detection failed in chat_info, falling through", exc_info=True)
             type_name = ""
         title = getattr(ch, "title", None)
         if not title:
@@ -244,6 +251,7 @@ def make_router(
                         or (str(ctype).lower() if ctype is not None else "")
                     )
                 except Exception:
+                    logger.debug("type detection failed in resolve_contact, falling through", exc_info=True)
                     type_name = ""
                 if type_name and type_name != "private":
                     raise HTTPException(status_code=400, detail="Username is not a private user")

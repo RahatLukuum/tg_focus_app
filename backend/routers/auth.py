@@ -1,6 +1,7 @@
 """Auth endpoints: send_code, sign_in, /me."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -8,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from pyrogram.errors import PasswordHashInvalid, SessionPasswordNeeded
 
 from deps.pyrogram_clients import PyrogramClientManager
+
+logger = logging.getLogger(__name__)
 
 PENDING_TTL_SECONDS = 600  # 10 min — phone_code_hash valid window
 RATE_LIMIT_SECONDS = 30   # min interval between send_code attempts per phone
@@ -52,6 +55,7 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
             pending_logins[phone] = (phone_code_hash, now + PENDING_TTL_SECONDS)
             return {"ok": True, "phone_code_hash": phone_code_hash}
         except Exception as e:
+            logger.warning("send_code failed for phone %s: %s", phone, e)
             raise HTTPException(status_code=400, detail=str(e))
 
     @router.api_route("/auth/sign_in", methods=["POST", "OPTIONS"])
@@ -86,6 +90,7 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
                     detail="Неверный пароль двухфакторной аутентификации",
                 )
             except Exception as e:
+                logger.warning("check_password failed for phone %s: %s", phone, e)
                 raise HTTPException(status_code=400, detail=str(e))
         else:
             try:
@@ -97,11 +102,13 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
             except SessionPasswordNeeded:
                 raise HTTPException(status_code=401, detail="Two-factor password required")
             except Exception as e:
+                logger.warning("sign_in failed for phone %s: %s", phone, e)
                 raise HTTPException(status_code=400, detail=str(e))
 
         try:
             me = await client.get_me()
         except Exception:
+            logger.warning("get_me() failed after sign_in for phone %s", phone, exc_info=True)
             me = None
         return {
             "ok": True,
