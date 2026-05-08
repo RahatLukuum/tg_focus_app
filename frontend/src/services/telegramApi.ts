@@ -232,6 +232,22 @@ class TelegramApiService {
     return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
+  /**
+   * Fetch messages newer than `sinceId` (chronological order).
+   * Used for delta-sync on chat open after rendering from cache.
+   */
+  async getMessagesSince(
+    chatId: number,
+    sinceId: number,
+    limit: number = 50,
+  ): Promise<Message[]> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson(
+      `/messages?chat_id=${encodeURIComponent(chatId)}&limit=${encodeURIComponent(limit)}&since_id=${encodeURIComponent(sinceId)}`,
+    );
+    return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
+  }
+
   async sendMessage(chatId: number, text: string): Promise<Message> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     await this.fetchJson('/send_message', {
