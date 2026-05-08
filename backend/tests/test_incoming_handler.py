@@ -12,11 +12,15 @@ from services.queue_service import QueueService
 
 
 class _FakeFolderService:
-    def __init__(self, archived: set[int] | None = None):
+    def __init__(self, archived: set[int] | None = None, chat_to_folders: dict[int, list[int]] | None = None):
         self._archived = archived or set()
+        self._c2f = chat_to_folders or {}
 
     def is_archived(self, account: str, chat_id: int) -> bool:
         return chat_id in self._archived
+
+    def get_cached_chat_folders(self, account: str, chat_id: int) -> list[int]:
+        return list(self._c2f.get(chat_id, []))
 
 
 def _make_message(chat_id: int, chat_type: str, text: str = "hi", outgoing: bool = False):
@@ -98,9 +102,7 @@ async def test_handler_broadcasts_queue_update_with_folder_ids():
     qs = QueueService()
     bcast = MagicMock()
     bcast.broadcast = AsyncMock()
-    folder = _FakeFolderService()
-    # Wire the chat-to-folders map so handler can look it up.
-    folder.chat_to_folders = {-100: [2, 3]}  # type: ignore[attr-defined]
+    folder = _FakeFolderService(chat_to_folders={-100: [2, 3]})
 
     handler = make_incoming_handler(qs, bcast, "", folder)
     msg = _make_message(-100, "supergroup")

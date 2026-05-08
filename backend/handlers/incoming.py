@@ -47,7 +47,7 @@ def make_incoming_handler(
 
         await queue_service.add(account, chat_id)
 
-        folder_ids = _lookup_folder_ids(folder_service, account, chat_id)
+        folder_ids = folder_service.get_cached_chat_folders(account, chat_id)
         await broadcaster.broadcast(
             {
                 "type": "queue_update",
@@ -88,28 +88,6 @@ def make_incoming_handler(
 
     return handler
 
-
-def _lookup_folder_ids(
-    folder_service: FolderService, account: str, chat_id: int
-) -> list[int]:
-    """Best-effort lookup against the FolderService cache.
-
-    The handler runs on every incoming message; we don't want to call the
-    Telegram raw API on the hot path. If the cache hasn't been primed yet
-    (no /folders or /bootstrap call yet for this account), return [].
-    """
-    # Prefer cached payload from the real FolderService.
-    cache = getattr(folder_service, "_cache", None)
-    if isinstance(cache, dict):
-        cached = cache.get((account or "").strip())
-        if cached:
-            chat_to_folders = cached[1].get("chat_to_folders", {})
-            return list(chat_to_folders.get(chat_id, []))
-    # Fallback for test fakes that expose `chat_to_folders` directly.
-    direct = getattr(folder_service, "chat_to_folders", None)
-    if isinstance(direct, dict):
-        return list(direct.get(chat_id, []))
-    return []
 
 
 def _format_author(message: Message) -> str | None:

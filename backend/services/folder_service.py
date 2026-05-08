@@ -111,6 +111,26 @@ class FolderService:
         """
         return chat_id in self._archived.get((account or "").strip(), set())
 
+    def get_cached_chat_folders(self, account: str, chat_id: int) -> list[int]:
+        """Non-blocking cache lookup for handler hot-path.
+
+        Returns [] if the cache hasn't been primed for this account yet.
+        Reading the cache is synchronous and atomic — safe to call from
+        within the same event loop as `get_folders()`.
+
+        Args:
+            account: Account identifier string.
+            chat_id: Telegram chat ID (signed int).
+
+        Returns:
+            List of folder IDs the chat belongs to, or [] if not cached.
+        """
+        cached = self._cache.get((account or "").strip())
+        if not cached:
+            return []
+        _ts, payload = cached
+        return list(payload.get("chat_to_folders", {}).get(chat_id, []))
+
     def set_archived(self, account: str, chat_ids: set[int]) -> None:
         """Replace the archived-chats set for the given account.
 
