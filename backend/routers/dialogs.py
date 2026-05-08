@@ -13,6 +13,7 @@ from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from services.folder_service import FolderService
 from services.queue_service import QueueService
+from services.response_cache import TtlCache
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,8 @@ def make_router(
 ) -> APIRouter:
     router = APIRouter()
 
+    bootstrap_cache: TtlCache[str, dict[str, Any]] = TtlCache(ttl_seconds=30)
+
     async def _get_contacts_payload(account: str) -> list[dict[str, Any]]:
         client = manager.get_or_create(account) if account else manager.default
         await manager.ensure_connected(client)
@@ -206,20 +209,25 @@ def make_router(
 
     @router.get("/bootstrap")
     async def get_bootstrap(limit: int = 100, account: str = ""):
-        client = await auth.get_authorized_client(account)
-        dialogs_task = asyncio.create_task(_build_dialogs_and_queue(client, limit=limit))
-        contacts_task = asyncio.create_task(_get_contacts_payload(account))
-        dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
-        # Tell FolderService which chats are archived (handler uses this).
-        folder_service.set_archived(account, dialogs_payload["archived_ids"])
-        await _attach_folder_ids(dialogs_payload["dialogs"], account)
-        queue_ids = dialogs_payload["queue"]
-        await queue_service.replace(account, queue_ids)
-        return {
-            "dialogs": dialogs_payload["dialogs"],
-            "contacts": contacts_payload,
-            "queue": queue_ids,
-        }
+        cache_key = f"{account}|{limit}"
+
+        async def _load() -> dict[str, Any]:
+            client = await auth.get_authorized_client(account)
+            dialogs_task = asyncio.create_task(_build_dialogs_and_queue(client, limit=limit))
+            contacts_task = asyncio.create_task(_get_contacts_payload(account))
+            dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
+            # Tell FolderService which chats are archived (handler uses this).
+            folder_service.set_archived(account, dialogs_payload["archived_ids"])
+            await _attach_folder_ids(dialogs_payload["dialogs"], account)
+            queue_ids = dialogs_payload["queue"]
+            await queue_service.replace(account, queue_ids)
+            return {
+                "dialogs": dialogs_payload["dialogs"],
+                "contacts": contacts_payload,
+                "queue": queue_ids,
+            }
+
+        return await bootstrap_cache.get_or_load(cache_key, _load)
 
     @router.get("/chat_info")
     async def chat_info(chat_id: int, account: str = ""):
