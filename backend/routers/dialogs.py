@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import APIRouter, HTTPException
 from pyrogram import Client
@@ -34,7 +34,7 @@ def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
             or (str(ctype).lower() if ctype is not None else "")
         )
     except Exception:
-        logger.debug("type detection failed in _map_dialog, falling through", exc_info=True)
+        logger.debug("type detection failed", exc_info=True)
         type_name = ""
     if type_name not in ("private", "group", "supergroup"):
         return None
@@ -50,6 +50,7 @@ def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
         first_name = getattr(chat, "first_name", None) or ""
         last_name = getattr(chat, "last_name", None) or ""
         title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat.id)
+    folder_id = int(getattr(d, "folder_id", 0) or 0)
     return {
         "chat_id": chat.id,
         "title": title,
@@ -57,24 +58,51 @@ def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
         "username": getattr(chat, "username", None),
         "unread_count": getattr(d, "unread_messages_count", 0),
         "last_message_text": last_text,
+        "folder_id": folder_id,
     }
 
 
-async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str, Any]:
-    dialogs: list[dict[str, Any]] = []
-    queue_ids: list[int] = []
+def _build_queue_from_dialogs(dialogs: Iterable[Any]) -> list[int]:
+    """Return chat_ids that should be in the queue.
+
+    Includes private + group + supergroup with unread > 0, excludes archive
+    (folder_id == 1). Preserves first-seen order; dedupes.
+    """
+    queue: list[int] = []
     seen: set[int] = set()
+    for d in dialogs:
+        item = _map_dialog(d)
+        if not item:
+            continue
+        if item.get("folder_id") == 1:
+            continue
+        if int(item.get("unread_count", 0) or 0) <= 0:
+            continue
+        cid = int(item["chat_id"])
+        if cid in seen:
+            continue
+        seen.add(cid)
+        queue.append(cid)
+    return queue
+
+
+async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str, Any]:
+    dialogs_raw: list[Any] = []
     async for d in client.get_dialogs(limit=limit):
+        dialogs_raw.append(d)
+
+    dialogs: list[dict[str, Any]] = []
+    archived_ids: set[int] = set()
+    for d in dialogs_raw:
         item = _map_dialog(d)
         if not item:
             continue
         dialogs.append(item)
-        if item["type"] == "private" and int(item.get("unread_count", 0) or 0) > 0:
-            cid = int(item["chat_id"])
-            if cid not in seen:
-                seen.add(cid)
-                queue_ids.append(cid)
-    return {"dialogs": dialogs, "queue": queue_ids}
+        if item.get("folder_id") == 1:
+            archived_ids.add(int(item["chat_id"]))
+    queue_ids = _build_queue_from_dialogs(dialogs_raw)
+
+    return {"dialogs": dialogs, "queue": queue_ids, "archived_ids": archived_ids}
 
 
 def _normalize_phone_e164(phone: str) -> str:
