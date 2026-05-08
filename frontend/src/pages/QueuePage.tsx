@@ -96,6 +96,7 @@ const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => 
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
+import { useFolders } from '@/hooks/useFolders';
 import { MediaType } from '@/types/telegram';
 
 type UiMsg = {
@@ -138,6 +139,7 @@ const QueuePage = () => {
     time: string;
   }>>>({});
   const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, loadChats, dispatch } = useTelegram();
+  const { folders, chatToFolders } = useFolders();
   const historyRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
@@ -262,6 +264,16 @@ const QueuePage = () => {
     lastMessage: history.at(-1)?.text || '',
     time: history.at(-1)?.time || '',
   } : undefined as any;
+
+  const currentFolderLabel = useMemo(() => {
+    if (!currentChatId) return "";
+    const ids = chatToFolders.get(currentChatId) || [];
+    if (ids.length === 0) return "";
+    const titles = ids
+      .map((id) => folders.find((f) => f.id === id)?.title)
+      .filter((t): t is string => !!t);
+    return titles.join(" · ");
+  }, [currentChatId, chatToFolders, folders]);
 
   const handleAction = async (action: 'done' | 'delay' | 'task') => {
     if (!currentChatId) return;
@@ -461,6 +473,12 @@ const QueuePage = () => {
                 </Avatar>
                 <div>
                   <h2 className="text-lg font-semibold">{currentDialog.name}</h2>
+                  {currentFolderLabel && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <span aria-hidden>📁</span>
+                      <span>{currentFolderLabel}</span>
+                    </p>
+                  )}
                   <p className="text-sm text-muted-foreground">{currentDialog.time}</p>
                 </div>
               </div>
