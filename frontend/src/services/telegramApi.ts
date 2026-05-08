@@ -381,6 +381,24 @@ class TelegramApiService {
     return Array.isArray(res.queue) ? res.queue : [];
   }
 
+  async getQueueMeta(): Promise<Array<{
+    chat_id: number;
+    topic_id: number | null;
+    topic_title: string | null;
+    folder_ids: number[];
+    last_message: {
+      id: number;
+      text: string | null;
+      from_name: string | null;
+      outgoing: boolean;
+      date: number | null;
+      topic_id: number | null;
+    } | null;
+  }>> {
+    const res = await this.fetchJson('/queue?meta=true');
+    return Array.isArray(res.queue) ? res.queue : [];
+  }
+
   async queueAction(
     chatId: number,
     action: 'done' | 'postpone' | 'task' | 'snooze' | 'skip',

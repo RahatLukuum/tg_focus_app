@@ -191,17 +191,21 @@ const QueuePage = () => {
 
   const fetchQueue = async () => {
     try {
-      const ids = await telegramApi.getQueue();
+      const items = await telegramApi.getQueueMeta();
+      const ids = items.map(i => i.chat_id);
       setQueueIds(prev => {
         const set = new Set(prev);
         const added: number[] = [];
-        for (const id of ids) {
-          if (!set.has(id)) added.push(id);
-        }
+        for (const id of ids) if (!set.has(id)) added.push(id);
         const filtered = prev.filter(id => ids.includes(id));
         return [...filtered, ...added];
       });
-    } catch {}
+      const metaMap: Record<number, { topic_id: number | null; topic_title: string | null }> = {};
+      for (const it of items) {
+        metaMap[it.chat_id] = { topic_id: it.topic_id ?? null, topic_title: it.topic_title ?? null };
+      }
+      dispatch({ type: 'SET_QUEUE_META', payload: metaMap });
+    } catch { /* ignore */ }
   };
 
   useEffect(() => {
@@ -557,9 +561,6 @@ const QueuePage = () => {
             </p>
           )}
         </div>
-        <div className="text-sm text-muted-foreground tabular-nums shrink-0 w-[4.5rem] text-right">
-          {visibleQueueIds.length > 0 ? `${currentIndex + 1} / ${visibleQueueIds.length}` : '—'}
-        </div>
       </div>
 
       <QueueFilter onChange={setFilter} />
@@ -640,10 +641,27 @@ const QueuePage = () => {
               )}
               
               {/* Current Message */}
-              <div className="bg-muted p-4 rounded-lg">
-                <p className="text-sm">{currentDialog.lastMessage}</p>
-                <p className="text-xs text-muted-foreground mt-2">{currentDialog.time}</p>
-              </div>
+              {(() => {
+                const lastMsg = state.messages[currentChatId]?.at(-1);
+                const queueMeta = state.queueMeta?.[currentChatId];
+                const topicTitle = queueMeta?.topic_title ?? null;
+                return (
+                  <div className="bg-muted p-4 rounded-lg space-y-1">
+                    {topicTitle && (
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        # {topicTitle}
+                      </p>
+                    )}
+                    {isGroupChat && lastMsg && !lastMsg.isOutgoing && lastMsg.senderName && (
+                      <p className="text-xs font-semibold text-blue-500">{lastMsg.senderName}</p>
+                    )}
+                    <p className="text-sm whitespace-pre-wrap break-words">{lastMsg?.text || currentDialog.lastMessage}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {lastMsg ? new Date(lastMsg.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : currentDialog.time}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* New Messages */}
               {getCurrentMessages().length > 0 && (

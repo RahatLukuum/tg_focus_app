@@ -18,6 +18,7 @@ interface TelegramState {
   lastIncomingChatId?: number;
   /** Увеличивается при событиях, влияющих на /queue (WS, действия в очереди) — для обновления счётчика без поллинга */
   queueRevision: number;
+  queueMeta?: Record<number, { topic_id: number | null; topic_title: string | null }>;
 }
 
 type TelegramAction =
@@ -38,7 +39,8 @@ type TelegramAction =
   | { type: 'CLEAR_ERROR' }
   | { type: 'LOGOUT' }
   | { type: 'INCOMING'; payload: { chatId: number; at: number } }
-  | { type: 'QUEUE_DIRTY' };
+  | { type: 'QUEUE_DIRTY' }
+  | { type: 'SET_QUEUE_META'; payload: Record<number, { topic_id: number | null; topic_title: string | null }> };
 
 const initialState: TelegramState = {
   auth: {
@@ -104,6 +106,8 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
       return { ...state, lastIncomingChatId: action.payload.chatId, lastIncomingAt: action.payload.at };
     case 'QUEUE_DIRTY':
       return { ...state, queueRevision: state.queueRevision + 1 };
+    case 'SET_QUEUE_META':
+      return { ...state, queueMeta: action.payload };
     case 'SET_ACTIVE_CHAT':
       return { ...state, activeChat: action.payload };
     case 'SET_LOADING':

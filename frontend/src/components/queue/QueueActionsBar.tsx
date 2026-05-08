@@ -52,6 +52,7 @@ export function QueueActionsBar({
         onSnooze={onSnooze}
       />
       <TaskFromChatForm
+        key={chatId}
         open={taskOpen}
         chatId={chatId}
         chatTitle={chatTitle}
