@@ -33,7 +33,7 @@ export interface Topic {
   lastMessageText: string | null;
 }
 
-export type MediaType = 'photo' | 'video' | 'voice' | 'document';
+export type MediaType = 'photo' | 'video' | 'voice' | 'video_note' | 'audio' | 'document';
 
 export interface Message {
   id: number;
@@ -48,6 +48,8 @@ export interface Message {
   mediaType?: MediaType;
   mediaUrl?: string;
   fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
   duration?: number;
   topicId?: number;
 }

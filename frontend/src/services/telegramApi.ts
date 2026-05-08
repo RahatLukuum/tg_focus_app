@@ -216,6 +216,8 @@ class TelegramApiService {
       msg.mediaUrl = m.media_url ? this.baseUrl + this.withAccountQuery(m.media_url) : undefined;
       if (m.file_name) msg.fileName = m.file_name;
       if (m.duration != null) msg.duration = m.duration;
+      if (m.file_size != null) msg.fileSize = m.file_size;
+      if (m.mime_type) msg.mimeType = m.mime_type;
     }
     if (m.message_thread_id != null) msg.topicId = m.message_thread_id;
     return msg;
