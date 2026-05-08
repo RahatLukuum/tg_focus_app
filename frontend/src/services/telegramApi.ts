@@ -1,4 +1,4 @@
-import { TelegramConfig, User, Chat, Message, MediaType } from '@/types/telegram';
+import { TelegramConfig, User, Chat, Message, MediaType, Topic } from '@/types/telegram';
 
 const ACTIVE_ACCOUNT_KEY = 'tg_active_account';
 
@@ -217,18 +217,28 @@ class TelegramApiService {
       if (m.file_name) msg.fileName = m.file_name;
       if (m.duration != null) msg.duration = m.duration;
     }
+    if (m.message_thread_id != null) msg.topicId = m.message_thread_id;
     return msg;
   }
 
-  async getMessages(chatId: number, limit: number = 100): Promise<Message[]> {
+  async getMessages(chatId: number, limit: number = 100, topicId?: number): Promise<Message[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
-    const res = await this.fetchJson(`/messages?chat_id=${encodeURIComponent(chatId)}&limit=${limit}`);
+    const params = new URLSearchParams();
+    params.set('chat_id', String(chatId));
+    params.set('limit', String(limit));
+    if (topicId !== undefined) params.set('topic_id', String(topicId));
+    const res = await this.fetchJson(`/messages?${params.toString()}`);
     return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
-  async getOlderMessages(chatId: number, beforeId: number, limit: number = 100): Promise<Message[]> {
+  async getOlderMessages(chatId: number, beforeId: number, limit: number = 100, topicId?: number): Promise<Message[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
-    const res = await this.fetchJson(`/messages?chat_id=${encodeURIComponent(chatId)}&limit=${limit}&before_id=${beforeId}`);
+    const params = new URLSearchParams();
+    params.set('chat_id', String(chatId));
+    params.set('limit', String(limit));
+    params.set('before_id', String(beforeId));
+    if (topicId !== undefined) params.set('topic_id', String(topicId));
+    const res = await this.fetchJson(`/messages?${params.toString()}`);
     return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
@@ -240,19 +250,25 @@ class TelegramApiService {
     chatId: number,
     sinceId: number,
     limit: number = 50,
+    topicId?: number,
   ): Promise<Message[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
-    const res = await this.fetchJson(
-      `/messages/since?chat_id=${encodeURIComponent(chatId)}&since_id=${encodeURIComponent(sinceId)}&limit=${encodeURIComponent(limit)}`,
-    );
+    const params = new URLSearchParams();
+    params.set('chat_id', String(chatId));
+    params.set('since_id', String(sinceId));
+    params.set('limit', String(limit));
+    if (topicId !== undefined) params.set('topic_id', String(topicId));
+    const res = await this.fetchJson(`/messages/since?${params.toString()}`);
     return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
 
-  async sendMessage(chatId: number, text: string): Promise<Message> {
+  async sendMessage(chatId: number, text: string, topicId?: number): Promise<Message> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const body: Record<string, unknown> = { chat_id: chatId, text };
+    if (topicId !== undefined) body.message_thread_id = topicId;
     await this.fetchJson('/send_message', {
       method: 'POST',
-      body: JSON.stringify({ chat_id: chatId, text })
+      body: JSON.stringify(body)
     });
     const currentUser = await this.getCurrentUser();
     return {
@@ -262,6 +278,7 @@ class TelegramApiService {
       text,
       date: new Date(),
       isOutgoing: true,
+      topicId,
     };
   }
 
@@ -317,6 +334,19 @@ class TelegramApiService {
 
   getBaseUrl(): string {
     return this.baseUrl;
+  }
+
+  async getTopics(chatId: number): Promise<Topic[]> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson(`/topics?chat_id=${encodeURIComponent(chatId)}`);
+    return (res.topics || []).map((t: Record<string, unknown>) => ({
+      topicId: t.topic_id,
+      title: t.title,
+      iconColor: t.icon_color,
+      iconEmojiId: t.icon_emoji_id,
+      unreadCount: t.unread_count,
+      lastMessageText: t.last_message_text,
+    }));
   }
 
   async getChatInfo(chatId: number): Promise<Chat> {
@@ -466,6 +496,7 @@ class TelegramApiService {
       title: d.title || 'Без названия',
       type: (d.type || 'private') as Chat['type'],
       unreadCount: d.unread_count || 0,
+      isForum: !!d.is_forum,
       lastMessage: d.last_message_text
         ? {
             id: Date.now(),

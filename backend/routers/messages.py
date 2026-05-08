@@ -63,6 +63,9 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 "outgoing": m.outgoing,
             }
             entry.update(media_info)
+            mtid = getattr(m, "message_thread_id", None)
+            if mtid is not None:
+                entry["message_thread_id"] = int(mtid)
             history.append(entry)
         history.reverse()
         return {"chat_id": chat_id, "messages": history}
@@ -95,6 +98,9 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 "outgoing": m.outgoing,
             }
             entry.update(media_info)
+            mtid = getattr(m, "message_thread_id", None)
+            if mtid is not None:
+                entry["message_thread_id"] = int(mtid)
             history.append(entry)
         history.sort(key=lambda e: e["id"])  # chronological
         return {"chat_id": chat_id, "messages": history[:limit]}
