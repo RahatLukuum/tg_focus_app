@@ -150,6 +150,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         media_type: str = Form(...),
         account: str = Form(""),
         caption: str = Form(""),
+        message_thread_id: Optional[int] = Form(None),
         file: UploadFile = File(...),
     ):
         client = await auth.get_authorized_client(account)
@@ -161,7 +162,12 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
 
         suffix = Path(file.filename or "file").suffix
         if not suffix:
-            suffix = ".ogg" if media_type == "voice" else ".bin"
+            suffix = (
+                ".ogg" if media_type == "voice"
+                else ".mp4" if media_type == "video_note"
+                else ".mp3" if media_type == "audio"
+                else ".bin"
+            )
         CHUNK_SIZE = 1 << 20  # 1 MiB
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path: Optional[str] = None
@@ -175,15 +181,24 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
             tmp_path = tmp.name
             tmp.close()
 
-            sent = None
+            common: dict[str, Any] = {"chat_id": chat_id}
+            if message_thread_id is not None:
+                common["message_thread_id"] = int(message_thread_id)
+            cap = caption or None
+
             if media_type == "photo":
-                sent = await client.send_photo(chat_id=chat_id, photo=tmp_path, caption=caption or None)
+                sent = await client.send_photo(photo=tmp_path, caption=cap, **common)
             elif media_type == "video":
-                sent = await client.send_video(chat_id=chat_id, video=tmp_path, caption=caption or None)
+                sent = await client.send_video(video=tmp_path, caption=cap, **common)
+            elif media_type == "video_note":
+                # Telegram: video notes don't carry captions.
+                sent = await client.send_video_note(video_note=tmp_path, **common)
             elif media_type == "voice":
-                sent = await client.send_voice(chat_id=chat_id, voice=tmp_path, caption=caption or None)
+                sent = await client.send_voice(voice=tmp_path, caption=cap, **common)
+            elif media_type == "audio":
+                sent = await client.send_audio(audio=tmp_path, caption=cap, **common)
             elif media_type == "document":
-                sent = await client.send_document(chat_id=chat_id, document=tmp_path, caption=caption or None)
+                sent = await client.send_document(document=tmp_path, caption=cap, **common)
             else:
                 raise HTTPException(status_code=400, detail="Unknown media_type")
             sent_id = sent.id if sent else None
