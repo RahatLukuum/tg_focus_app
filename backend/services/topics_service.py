@@ -29,17 +29,46 @@ def _serialize(topic: Any) -> dict[str, Any]:
 
 
 class TopicsService:
+    """Loads + caches Telegram forum-supergroup topics with a TTL.
+
+    Cache entries are keyed by ``(account, chat_id)`` tuples, where the
+    account string is "" for the default account. Each entry expires
+    ``ttl_seconds`` after it was last fetched; expired keys are refetched
+    transparently on the next call.
+    """
+
     def __init__(self, manager: Any, ttl_seconds: int = 60) -> None:
         self._manager = manager
         self._ttl = ttl_seconds
         self._cache: dict[tuple[str, int], tuple[float, list[dict[str, Any]]]] = {}
 
-    def _client_for(self, account: str):
-        if account:
-            return self._manager.get_or_create(account)
-        return self._manager.default
+    def _client_for(self, account: str) -> Any:
+        """Return the appropriate Pyrogram client for the given account key.
+
+        Args:
+            account: Stripped account identifier. Empty string means default.
+
+        Returns:
+            Pyrogram client instance.
+        """
+        if not account:
+            return self._manager.default
+        return self._manager.get_or_create(account)
 
     async def get_topics(self, account: str, chat_id: int) -> list[dict[str, Any]]:
+        """Return the list of topic dicts for a forum-supergroup chat.
+
+        Results are TTL-cached per ``(account, chat_id)``. On any error
+        from ``get_forum_topics``, the failure is logged and an empty list
+        is returned (and cached) instead of raising.
+
+        Args:
+            account: Account identifier string. Empty string uses default client.
+            chat_id: Telegram chat ID of the forum supergroup.
+
+        Returns:
+            List of serialized topic dicts; empty on error.
+        """
         key = ((account or "").strip(), int(chat_id))
         now = time.monotonic()
         cached = self._cache.get(key)
@@ -61,6 +90,18 @@ class TopicsService:
         return topics
 
     async def get_topic_title(self, account: str, chat_id: int, topic_id: int) -> Optional[str]:
+        """Return the title of a specific topic, or None if not found.
+
+        Uses ``get_topics`` under the hood, so the same TTL cache applies.
+
+        Args:
+            account: Account identifier string. Empty string uses default client.
+            chat_id: Telegram chat ID of the forum supergroup.
+            topic_id: Numeric topic ID to look up.
+
+        Returns:
+            Topic title string, or ``None`` if no matching topic_id exists.
+        """
         topics = await self.get_topics(account=account, chat_id=chat_id)
         for t in topics:
             if t["topic_id"] == int(topic_id):
@@ -68,6 +109,14 @@ class TopicsService:
         return None
 
     def invalidate(self, account: str = "", chat_id: Optional[int] = None) -> None:
+        """Drop cached topic entries for an account, optionally narrowing by chat.
+
+        Args:
+            account: Account identifier string. Empty string uses default client.
+            chat_id: If provided, only that ``(account, chat_id)`` entry is
+                cleared. If ``None``, all cached entries belonging to the
+                account are cleared.
+        """
         if chat_id is None:
             for k in list(self._cache.keys()):
                 if k[0] == (account or "").strip():
