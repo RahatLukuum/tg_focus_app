@@ -5,6 +5,7 @@ Pyrogram callbacks. This file's job is composition only.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,6 +31,7 @@ from routers import tasks as tasks_router
 from services.claude_client import ClaudeClient, ClaudeConfig
 from services.folder_service import FolderService
 from services.queue_service import QueueService
+from services.snooze_worker import start_snooze_worker
 from services.state_store import JsonStore
 from services.task_store import TaskStore
 from ws.broadcaster import broadcaster
@@ -42,7 +44,11 @@ def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
     cfg = load_config()
     manager = PyrogramClientManager(cfg)
-    queue_service = QueueService()
+    queue_state_store = JsonStore(
+        cfg.session_dir / "queue_state.json",
+        default_factory=lambda: {"queues": {}, "snoozed": {}},
+    )
+    queue_service = QueueService(store=queue_state_store)
     folder_service = FolderService(manager)
     auth_deps = AuthDeps(manager)
 
@@ -68,13 +74,22 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        yield
-        await manager.stop_all()
-        if claude_client is not None:
+        await queue_service.load()
+        worker = start_snooze_worker(queue_service, broadcaster)
+        try:
+            yield
+        finally:
+            worker.cancel()
             try:
-                await claude_client.aclose()
-            except Exception:
-                logger.warning("claude_client.aclose() failed", exc_info=True)
+                await worker
+            except (asyncio.CancelledError, Exception):
+                pass
+            await manager.stop_all()
+            if claude_client is not None:
+                try:
+                    await claude_client.aclose()
+                except Exception:
+                    logger.warning("claude_client.aclose() failed", exc_info=True)
 
     app = FastAPI(title="TG Backend API", lifespan=lifespan)
 
