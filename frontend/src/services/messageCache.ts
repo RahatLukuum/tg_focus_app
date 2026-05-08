@@ -5,6 +5,7 @@ const STORE = createStore("tg-focus-msg-cache", "chats");
 
 const MAX_CHATS = 50;
 const MAX_MSGS_PER_CHAT = 100;
+const TOUCH_THROTTLE_MS = 10_000;
 
 type Entry = {
   messages: Message[];
@@ -14,16 +15,35 @@ type Entry = {
 
 const keyFor = (chatId: number) => `chat:${chatId}`;
 
+// Per-chat write queue to prevent concurrent writes from losing data.
+const writeQueues = new Map<number, Promise<void>>();
+
+function withChatLock(chatId: number, fn: () => Promise<void>): Promise<void> {
+  const prev = writeQueues.get(chatId) ?? Promise.resolve();
+  const next = prev.then(fn).catch(() => undefined).finally(() => {
+    if (writeQueues.get(chatId) === next) {
+      writeQueues.delete(chatId);
+    }
+  });
+  writeQueues.set(chatId, next);
+  return next;
+}
+
 /**
  * Read cached messages for a chat. Returns null on miss or any IndexedDB
  * error (cache is best-effort — errors must not break the UI).
+ * Throttles the lastTouchedAt update to at most once per TOUCH_THROTTLE_MS
+ * to avoid write amplification on rapid renders.
  */
 export async function getCached(chatId: number): Promise<Entry | null> {
   try {
     const e = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
     if (!e) return null;
-    // Bump lastTouchedAt for LRU; don't await — fire and forget.
-    void set(keyFor(chatId), { ...e, lastTouchedAt: Date.now() }, STORE).catch(() => {});
+    if (Date.now() - (e.lastTouchedAt ?? 0) > TOUCH_THROTTLE_MS) {
+      void withChatLock(chatId, async () => {
+        await set(keyFor(chatId), { ...e, lastTouchedAt: Date.now() }, STORE);
+      });
+    }
     return e;
   } catch {
     return null;
@@ -34,17 +54,19 @@ export async function getCached(chatId: number): Promise<Entry | null> {
  * Replace the whole cached message list for a chat (e.g. after fresh /messages).
  */
 export async function setCached(chatId: number, messages: Message[]): Promise<void> {
-  try {
-    const trimmed = messages.slice(-MAX_MSGS_PER_CHAT);
-    await set(
-      keyFor(chatId),
-      { messages: trimmed, lastSyncAt: Date.now(), lastTouchedAt: Date.now() },
-      STORE,
-    );
-    void enforceCapacity().catch(() => {});
-  } catch {
-    /* best-effort */
-  }
+  return withChatLock(chatId, async () => {
+    try {
+      const trimmed = messages.slice(-MAX_MSGS_PER_CHAT);
+      await set(
+        keyFor(chatId),
+        { messages: trimmed, lastSyncAt: Date.now(), lastTouchedAt: Date.now() },
+        STORE,
+      );
+      void enforceCapacity().catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  });
 }
 
 /**
@@ -57,33 +79,37 @@ export async function appendCached(
   newMessages: Message[],
 ): Promise<void> {
   if (newMessages.length === 0) return;
-  try {
-    const existing = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
-    if (existing === null) return;  // don't create phantom entry from WS-only data
-    const seen = new Set(existing.messages.map((m) => m.id));
-    const merged = [
-      ...existing.messages,
-      ...newMessages.filter((m) => !seen.has(m.id)),
-    ];
-    merged.sort((a, b) => a.id - b.id);
-    const trimmed = merged.slice(-MAX_MSGS_PER_CHAT);
-    await set(
-      keyFor(chatId),
-      { messages: trimmed, lastSyncAt: Date.now(), lastTouchedAt: Date.now() },
-      STORE,
-    );
-    void enforceCapacity().catch(() => {});
-  } catch {
-    /* best-effort */
-  }
+  return withChatLock(chatId, async () => {
+    try {
+      const existing = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
+      if (existing === null) return;  // don't create phantom entry from WS-only data
+      const seen = new Set(existing.messages.map((m) => m.id));
+      const merged = [
+        ...existing.messages,
+        ...newMessages.filter((m) => !seen.has(m.id)),
+      ];
+      merged.sort((a, b) => a.id - b.id);
+      const trimmed = merged.slice(-MAX_MSGS_PER_CHAT);
+      await set(
+        keyFor(chatId),
+        { messages: trimmed, lastSyncAt: Date.now(), lastTouchedAt: Date.now() },
+        STORE,
+      );
+      void enforceCapacity().catch(() => {});
+    } catch {
+      /* best-effort */
+    }
+  });
 }
 
 export async function clearCached(chatId: number): Promise<void> {
-  try {
-    await del(keyFor(chatId), STORE);
-  } catch {
-    /* best-effort */
-  }
+  return withChatLock(chatId, async () => {
+    try {
+      await del(keyFor(chatId), STORE);
+    } catch {
+      /* best-effort */
+    }
+  });
 }
 
 /**
