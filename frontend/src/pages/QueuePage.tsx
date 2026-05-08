@@ -343,7 +343,11 @@ const QueuePage = () => {
     if (!currentChatId) return;
     try {
       await telegramApi.queueAction(currentChatId, 'done');
-      setQueueIds((prev) => prev.filter((id) => id !== currentChatId));
+      setQueueIds((prev) => {
+        const next = prev.filter((id) => id !== currentChatId);
+        setCurrentIndex((i) => Math.min(i, Math.max(0, next.length - 1)));
+        return next;
+      });
       dispatch({ type: 'QUEUE_DIRTY' });
     } catch (e) {
       console.warn('done failed', e);
@@ -354,7 +358,11 @@ const QueuePage = () => {
     if (!currentChatId) return;
     try {
       await telegramApi.queueAction(currentChatId, 'snooze', { snooze_until: untilTs });
-      setQueueIds((prev) => prev.filter((id) => id !== currentChatId));
+      setQueueIds((prev) => {
+        const next = prev.filter((id) => id !== currentChatId);
+        setCurrentIndex((i) => Math.min(i, Math.max(0, next.length - 1)));
+        return next;
+      });
       dispatch({ type: 'QUEUE_DIRTY' });
     } catch (e) {
       console.warn('snooze failed', e);
