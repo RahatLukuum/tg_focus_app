@@ -5,6 +5,7 @@ const STORE = createStore("tg-focus-msg-cache", "chats");
 
 const MAX_CHATS = 50;
 const MAX_MSGS_PER_CHAT = 100;
+/** Only write lastTouchedAt back to IDB at most once per this window (ms). */
 const TOUCH_THROTTLE_MS = 10_000;
 
 type Entry = {
