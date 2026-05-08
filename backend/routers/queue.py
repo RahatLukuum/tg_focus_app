@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from typing import Any, Optional
@@ -29,14 +28,9 @@ def _format_author(m) -> Optional[str]:
     return None
 
 
-async def _fetch_last_message(
-    client, chat_id: int, topics_service: TopicsService, account: str
-) -> Optional[dict[str, Any]]:
+async def _fetch_last_message(client, chat_id: int) -> Optional[dict[str, Any]]:
     try:
-        result = client.get_chat_history(chat_id, limit=1)
-        if inspect.iscoroutine(result):
-            result = await result
-        async for m in result:
+        async for m in client.get_chat_history(chat_id, limit=1):
             text = (getattr(m, "text", None) or getattr(m, "caption", None) or "").strip() or None
             topic_id = getattr(m, "message_thread_id", None)
             return {
@@ -88,8 +82,8 @@ def make_router(
                     try:
                         await manager.ensure_connected(client)
                     except Exception:
-                        pass
-                last = await _fetch_last_message(client, cid, topics_service, account) if client else None
+                        logger.debug("ensure_connected failed for account=%r", account, exc_info=True)
+                last = await _fetch_last_message(client, cid) if client else None
                 if last is not None:
                     queue_meta_cache.set(account, cid, last)
             topic_id = last.get("topic_id") if last else None

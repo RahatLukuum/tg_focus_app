@@ -46,7 +46,7 @@ class _FakeManager:
         async def _ensure(client): return None
         self.ensure_connected = _ensure
 
-    async def get_chat_history(self, chat_id, limit=1):
+    def get_chat_history(self, chat_id, limit=1):
         async def gen():
             for m in self._h.get(chat_id, [])[:limit]:
                 yield m
