@@ -328,17 +328,6 @@ const QueuePage = () => {
     return titles.join(" · ");
   }, [currentChatId, chatToFolders, folders]);
 
-  const handleAction = async (action: 'done' | 'delay' | 'task') => {
-    if (!currentChatId) return;
-    const map: Record<string,string> = { delay: 'postpone', task: 'task', done: 'done' };
-    try {
-      const newQueue = await telegramApi.queueAction(currentChatId, map[action] as any);
-      setQueueIds(newQueue);
-      setCurrentIndex(i => Math.min(i, Math.max(0, (newQueue.length - 1))));
-      dispatch({ type: 'QUEUE_DIRTY' });
-    } catch {}
-  };
-
   const handleDone = async () => {
     if (!currentChatId) return;
     try {
