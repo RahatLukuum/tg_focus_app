@@ -98,7 +98,7 @@ import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { useFolders } from '@/hooks/useFolders';
 import { usePrefetchQueue } from '@/hooks/usePrefetchQueue';
-import { QueueFolderFilter } from '@/components/queue/QueueFolderFilter';
+import { QueueFilter, type QueueFilterState } from '@/components/queue/QueueFilter';
 import { QueueActionsBar } from '@/components/queue/QueueActionsBar';
 import { getCached, setCached } from '@/services/messageCache';
 import { MediaType } from '@/types/telegram';
@@ -144,7 +144,7 @@ const QueuePage = () => {
   }>>>({});
   const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, loadChats, dispatch } = useTelegram();
   const { folders, chatToFolders } = useFolders();
-  const [folderFilter, setFolderFilter] = useState<number[]>([]);
+  const [filter, setFilter] = useState<QueueFilterState>({ types: [], folderIds: [] });
   const historyRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
@@ -211,12 +211,23 @@ const QueuePage = () => {
   }, [state.queueRevision]);
 
   const visibleQueueIds = useMemo(() => {
-    if (folderFilter.length === 0) return queueIds;
     return queueIds.filter((cid) => {
-      const folders = chatToFolders.get(cid) ?? [];
-      return folders.some((id) => folderFilter.includes(id));
+      const chat = state.chats.find(c => c.id === cid);
+      if (filter.types.length > 0) {
+        const isPrivate = chat?.type === 'private';
+        const isGroupChat = chat?.type === 'group' || chat?.type === 'supergroup';
+        const matchesType =
+          (filter.types.includes('private') && isPrivate) ||
+          (filter.types.includes('groups') && isGroupChat);
+        if (!matchesType) return false;
+      }
+      if (filter.folderIds.length > 0) {
+        const chatFolders = chatToFolders.get(cid) ?? [];
+        if (!chatFolders.some(id => filter.folderIds.includes(id))) return false;
+      }
+      return true;
     });
-  }, [queueIds, folderFilter, chatToFolders]);
+  }, [queueIds, filter, chatToFolders, state.chats]);
 
   const currentChatId = visibleQueueIds[currentIndex];
   const currentChat = state.chats.find(c => c.id === currentChatId) || state.contacts?.find(c => c.id === currentChatId);
@@ -551,7 +562,7 @@ const QueuePage = () => {
         </div>
       </div>
 
-      <QueueFolderFilter onChange={setFolderFilter} />
+      <QueueFilter onChange={setFilter} />
 
       {/* Dialog */}
       <div className="flex-1 flex items-center justify-center p-4">
