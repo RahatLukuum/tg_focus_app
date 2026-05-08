@@ -83,13 +83,16 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
         }
       };
     case 'PREPEND_MESSAGES': {
-      const existing = state.messages[action.payload.chatId] || [];
+      const existing = state.messages[action.payload.chatId] ?? [];
+      const seen = new Set(existing.map((m) => m.id));
+      const fresh = action.payload.messages.filter((m) => !seen.has(m.id));
+      if (fresh.length === 0) return state;
       return {
         ...state,
         messages: {
           ...state.messages,
-          [action.payload.chatId]: [...action.payload.messages, ...existing]
-        }
+          [action.payload.chatId]: [...fresh, ...existing].sort((a, b) => a.id - b.id),
+        },
       };
     }
     case 'ADD_MESSAGE':

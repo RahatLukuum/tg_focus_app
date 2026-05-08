@@ -4,8 +4,7 @@ import type { Message } from "@/types/telegram";
 const STORE = createStore("tg-focus-msg-cache", "chats");
 
 const MAX_CHATS = 50;
-const MAX_MSGS_PER_CHAT = 100;
-/** Only write lastTouchedAt back to IDB at most once per this window (ms). */
+const MAX_MSGS_PER_CHAT = 1000;
 const TOUCH_THROTTLE_MS = 10_000;
 
 type Entry = {
@@ -16,26 +15,17 @@ type Entry = {
 
 const keyFor = (chatId: number) => `chat:${chatId}`;
 
-// Per-chat write queue to prevent concurrent writes from losing data.
 const writeQueues = new Map<number, Promise<void>>();
 
 function withChatLock(chatId: number, fn: () => Promise<void>): Promise<void> {
   const prev = writeQueues.get(chatId) ?? Promise.resolve();
   const next = prev.then(fn).catch(() => undefined).finally(() => {
-    if (writeQueues.get(chatId) === next) {
-      writeQueues.delete(chatId);
-    }
+    if (writeQueues.get(chatId) === next) writeQueues.delete(chatId);
   });
   writeQueues.set(chatId, next);
   return next;
 }
 
-/**
- * Read cached messages for a chat. Returns null on miss or any IndexedDB
- * error (cache is best-effort — errors must not break the UI).
- * Throttles the lastTouchedAt update to at most once per TOUCH_THROTTLE_MS
- * to avoid write amplification on rapid renders.
- */
 export async function getCached(chatId: number): Promise<Entry | null> {
   try {
     const e = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
@@ -51,9 +41,6 @@ export async function getCached(chatId: number): Promise<Entry | null> {
   }
 }
 
-/**
- * Replace the whole cached message list for a chat (e.g. after fresh /messages).
- */
 export async function setCached(chatId: number, messages: Message[]): Promise<void> {
   return withChatLock(chatId, async () => {
     try {
@@ -70,11 +57,6 @@ export async function setCached(chatId: number, messages: Message[]): Promise<vo
   });
 }
 
-/**
- * Append new messages (deduped by id) to the cached list and update timestamps.
- * No-op when there is no existing entry — avoids creating phantom cache entries
- * from WS-only data (which would cause history holes when the user opens the chat).
- */
 export async function appendCached(
   chatId: number,
   newMessages: Message[],
@@ -83,7 +65,7 @@ export async function appendCached(
   return withChatLock(chatId, async () => {
     try {
       const existing = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
-      if (existing === null) return;  // don't create phantom entry from WS-only data
+      if (existing === null) return;
       const seen = new Set(existing.messages.map((m) => m.id));
       const merged = [
         ...existing.messages,
@@ -103,19 +85,43 @@ export async function appendCached(
   });
 }
 
-export async function clearCached(chatId: number): Promise<void> {
+/**
+ * Prepend older messages (deduped). Trims to MAX_MSGS_PER_CHAT keeping NEWEST.
+ * No-op when there's no existing entry.
+ */
+export async function prependCached(
+  chatId: number,
+  olderMessages: Message[],
+): Promise<void> {
+  if (olderMessages.length === 0) return;
   return withChatLock(chatId, async () => {
     try {
-      await del(keyFor(chatId), STORE);
+      const existing = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
+      if (existing === null) return;
+      const seen = new Set(existing.messages.map((m) => m.id));
+      const merged = [
+        ...olderMessages.filter((m) => !seen.has(m.id)),
+        ...existing.messages,
+      ];
+      merged.sort((a, b) => a.id - b.id);
+      const trimmed = merged.slice(-MAX_MSGS_PER_CHAT);
+      await set(
+        keyFor(chatId),
+        { messages: trimmed, lastSyncAt: Date.now(), lastTouchedAt: Date.now() },
+        STORE,
+      );
     } catch {
       /* best-effort */
     }
   });
 }
 
-/**
- * LRU trim: if more than MAX_CHATS entries, drop the oldest by lastTouchedAt.
- */
+export async function clearCached(chatId: number): Promise<void> {
+  return withChatLock(chatId, async () => {
+    try { await del(keyFor(chatId), STORE); } catch { /* best-effort */ }
+  });
+}
+
 async function enforceCapacity(): Promise<void> {
   const all = await entries<string, Entry>(STORE);
   if (all.length <= MAX_CHATS) return;
@@ -124,9 +130,6 @@ async function enforceCapacity(): Promise<void> {
   await Promise.all(toDrop.map(([k]) => del(k, STORE)));
 }
 
-/**
- * Manual probe used in tests: list all cached chat IDs.
- */
 export async function listCachedChats(): Promise<number[]> {
   const ks = await keys<string>(STORE);
   return ks
