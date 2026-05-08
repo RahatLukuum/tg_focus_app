@@ -10,7 +10,12 @@ export type Task = {
 
 const BASE_URL: string = (() => {
   const envBase = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
-  return (envBase && envBase.trim()) || 'http://185.250.149.23:8080';
+  if (envBase && envBase.trim()) return envBase.trim();
+  // Runtime fallback: same origin as the frontend.
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin;
+  }
+  return "";
 })();
 
 const url = (path: string): string => `${BASE_URL}${path}`;
