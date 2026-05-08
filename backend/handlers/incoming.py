@@ -1,13 +1,13 @@
 """Factory for Pyrogram incoming-message handlers.
 
 Accepts private + group + supergroup chats. Channels (broadcast) and archived
-chats are skipped. The queue_update broadcast event carries folder_ids so
-clients can apply folder filters without an extra /folders round-trip.
+chats are skipped. Forum-supergroup messages also carry topic_id and
+topic_title (best-effort, from TopicsService cache).
 """
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from pyrogram import Client
 from pyrogram.types import Message
@@ -27,6 +27,8 @@ def make_incoming_handler(
     broadcaster: Broadcaster,
     account: str,
     folder_service: FolderService,
+    topics_service: Optional[Any] = None,
+    queue_meta_cache: Optional[Any] = None,
 ):
     async def handler(client: Client, message: Message) -> None:
         try:
@@ -46,6 +48,22 @@ def make_incoming_handler(
             return
 
         await queue_service.add(account, chat_id)
+        if queue_meta_cache is not None:
+            try:
+                queue_meta_cache.invalidate(account, chat_id)
+            except Exception:
+                logger.debug("queue_meta_cache invalidate failed", exc_info=True)
+
+        topic_id = getattr(message, "message_thread_id", None)
+        topic_id_int = int(topic_id) if topic_id else None
+        topic_title: Optional[str] = None
+        if topic_id_int is not None and topics_service is not None:
+            try:
+                topic_title = await topics_service.get_topic_title(
+                    account=account, chat_id=chat_id, topic_id=topic_id_int
+                )
+            except Exception:
+                topic_title = None
 
         folder_ids = folder_service.get_cached_chat_folders(account, chat_id)
         await broadcaster.broadcast(
@@ -54,6 +72,7 @@ def make_incoming_handler(
                 "account": account,
                 "chat_id": chat_id,
                 "folder_ids": folder_ids,
+                "topic_id": topic_id_int,
             }
         )
 
@@ -82,6 +101,8 @@ def make_incoming_handler(
                     "account": account,
                     "chat_id": chat_id,
                     "chat_title": chat_title,
+                    "topic_id": topic_id_int,
+                    "topic_title": topic_title,
                     "message": payload,
                 }
             )
@@ -89,8 +110,7 @@ def make_incoming_handler(
     return handler
 
 
-
-def _format_author(message: Message) -> str | None:
+def _format_author(message: Message) -> Optional[str]:
     try:
         if message.from_user:
             first = message.from_user.first_name or ""
