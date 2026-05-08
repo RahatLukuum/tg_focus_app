@@ -76,3 +76,29 @@ def test_build_queue_dedupes_chat_ids():
     d = _dialog(1, "private", unread=2)
     queue = _build_queue_from_dialogs([d, d])
     assert queue == [1]
+
+
+def test_map_dialog_emits_is_forum_true_for_supergroup_with_is_forum_attr():
+    from routers.dialogs import _map_dialog
+    chat = SimpleNamespace(
+        id=-100123, type=SimpleNamespace(value="supergroup"),
+        title="Forum", first_name=None, last_name=None,
+        username=None, is_forum=True,
+    )
+    d = SimpleNamespace(chat=chat, top_message=None,
+                        unread_messages_count=0, folder_id=0)
+    result = _map_dialog(d)
+    assert result["is_forum"] is True
+
+
+def test_map_dialog_emits_is_forum_false_when_attr_missing():
+    from routers.dialogs import _map_dialog
+    chat = SimpleNamespace(
+        id=200, type=SimpleNamespace(value="private"),
+        title=None, first_name="A", last_name="B",
+        username=None,
+    )
+    d = SimpleNamespace(chat=chat, top_message=None,
+                        unread_messages_count=0, folder_id=0)
+    result = _map_dialog(d)
+    assert result["is_forum"] is False

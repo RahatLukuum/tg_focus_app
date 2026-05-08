@@ -61,6 +61,7 @@ def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
         "unread_count": getattr(d, "unread_messages_count", 0),
         "last_message_text": last_text,
         "folder_id": folder_id,
+        "is_forum": bool(getattr(chat, "is_forum", False)),
     }
 
 
