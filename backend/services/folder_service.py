@@ -178,11 +178,17 @@ class FolderService:
 
     @staticmethod
     def _peer_chat_id(peer: Any) -> Optional[int]:
-        """Map a raw peer to a signed chat_id matching Pyrogram's convention.
+        """Map a raw peer to a signed chat_id matching Pyrogram's public convention.
 
-        Pyrogram exposes user IDs as positive ints, channel/supergroup IDs as
-        negative ints (with the -100... prefix). Raw peers expose them via
-        ``.user_id``, ``.channel_id``, or ``.chat_id``.
+        Pyrogram's public API uses these conventions for the chat_id field:
+          - User: positive integer (e.g. 12345)
+          - Basic legacy group: negative integer (e.g. -12345)
+          - Supergroup/channel: -100<channel_id> (e.g. -1001234567890)
+
+        Raw DialogFilter peers expose:
+          - InputPeerUser.user_id   → positive
+          - InputPeerChat.chat_id   → bare positive (legacy group)
+          - InputPeerChannel.channel_id → bare positive (supergroup/channel)
 
         Args:
             peer: Raw Pyrogram peer object.
@@ -193,7 +199,9 @@ class FolderService:
         if hasattr(peer, "user_id"):
             return int(peer.user_id)
         if hasattr(peer, "channel_id"):
-            return -int(peer.channel_id)
+            # Pyrogram public ID for supergroups/channels = -100<channel_id>
+            return int(f"-100{int(peer.channel_id)}")
         if hasattr(peer, "chat_id"):
+            # Legacy basic groups: negate the bare id
             return -int(peer.chat_id)
         return None

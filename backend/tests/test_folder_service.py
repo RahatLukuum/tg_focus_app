@@ -16,18 +16,22 @@ from services.folder_service import Folder, FolderService
 def _filter(id: int, title: str, included_chat_ids: list[int]):
     """Build a fake DialogFilter raw object that FolderService can read.
 
-    Pyrogram returns objects with attributes; we mimic the relevant subset:
-    .id, .title, and .include_peers (each peer has .user_id / .chat_id /
-    .channel_id depending on type — FolderService normalizes them).
+    Public chat_id convention:
+      - positive: user
+      - between -1 and -1e12: legacy basic group → raw `chat_id` field
+      - <= -1e12: supergroup/channel → raw `channel_id` field (-100 prefix stripped)
     """
     peers = []
     for cid in included_chat_ids:
         if cid > 0:
             peers.append(SimpleNamespace(user_id=cid))
+        elif cid <= -1_000_000_000_000:
+            # Supergroup/channel: strip -100 prefix → raw channel_id
+            channel_id = -cid - 1_000_000_000_000
+            peers.append(SimpleNamespace(channel_id=channel_id))
         else:
-            # Pyrogram represents channel/supergroup IDs as negative; raw layer
-            # uses bare positive ids on .channel_id / .chat_id. We mimic raw.
-            peers.append(SimpleNamespace(channel_id=abs(cid)))
+            # Legacy basic group: raw chat_id is bare positive
+            peers.append(SimpleNamespace(chat_id=abs(cid)))
     return SimpleNamespace(
         id=id,
         title=title,
@@ -70,7 +74,7 @@ def manager():
 
 async def test_get_folders_returns_user_folders_skipping_default(manager):
     svc = FolderService(manager)
-    f1 = _filter(2, "Work", [100, -200])
+    f1 = _filter(2, "Work", [100, -1_001_000_000_200])
     f2 = _filter(3, "Friends", [300])
     manager.default.invoke = AsyncMock(return_value=[_default_filter(), f1, f2])
 
@@ -81,14 +85,14 @@ async def test_get_folders_returns_user_folders_skipping_default(manager):
 
 async def test_chat_to_folders_maps_chats_to_their_filter_ids(manager):
     svc = FolderService(manager)
-    work = _filter(2, "Work", [100, -200])
+    work = _filter(2, "Work", [100, -1_001_000_000_200])  # 100 user + supergroup
     friends = _filter(3, "Friends", [100, 300])  # 100 in BOTH folders
     manager.default.invoke = AsyncMock(return_value=[_default_filter(), work, friends])
 
     out = await svc.get_folders(account="")
     chat_to_folders = out["chat_to_folders"]
     assert sorted(chat_to_folders[100]) == [2, 3]
-    assert chat_to_folders[-200] == [2]
+    assert chat_to_folders[-1_001_000_000_200] == [2]
     assert chat_to_folders[300] == [3]
 
 
@@ -171,3 +175,37 @@ async def test_get_folders_handles_invoke_error(manager):
     manager.default.invoke = AsyncMock(side_effect=RuntimeError("boom"))
     out = await svc.get_folders(account="")
     assert out == {"folders": [], "chat_to_folders": {}}
+
+
+async def test_supergroup_channel_id_uses_minus_100_prefix(manager):
+    """Channel peers with raw channel_id=N must map to chat_id=-100N
+    matching client.get_dialogs() convention.
+    """
+    svc = FolderService(manager)
+    raw_channel_id = 1234567890
+    expected_chat_id = -1_001_234_567_890
+    f = SimpleNamespace(
+        id=2,
+        title="Test",
+        include_peers=[SimpleNamespace(channel_id=raw_channel_id)],
+    )
+    manager.default.invoke = AsyncMock(return_value=[_default_filter(), f])
+    out = await svc.get_folders(account="")
+    assert expected_chat_id in out["chat_to_folders"]
+    folder = out["folders"][0]
+    assert folder.chat_ids == (expected_chat_id,)
+
+
+async def test_legacy_basic_group_chat_id_negated_only(manager):
+    """Legacy chat peers with raw chat_id=N must map to -N (no -100 prefix)."""
+    svc = FolderService(manager)
+    raw_chat_id = 12345
+    expected_chat_id = -12345
+    f = SimpleNamespace(
+        id=2,
+        title="Test",
+        include_peers=[SimpleNamespace(chat_id=raw_chat_id)],
+    )
+    manager.default.invoke = AsyncMock(return_value=[_default_filter(), f])
+    out = await svc.get_folders(account="")
+    assert expected_chat_id in out["chat_to_folders"]
