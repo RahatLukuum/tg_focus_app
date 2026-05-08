@@ -47,11 +47,11 @@ def create_app() -> FastAPI:
 
     # Wire incoming handler factory once.
     manager.set_incoming_handler_factory(
-        lambda client, account: make_incoming_handler(queue_service, broadcaster, account)
+        lambda client, account: make_incoming_handler(queue_service, broadcaster, account, folder_service)
     )
 
     # Attach handler to default client too (it doesn't go through get_or_create).
-    _default_handler = make_incoming_handler(queue_service, broadcaster, "")
+    _default_handler = make_incoming_handler(queue_service, broadcaster, "", folder_service)
     manager.default.add_handler(
         MessageHandler(_default_handler, filters.incoming & ~filters.service)
     )
