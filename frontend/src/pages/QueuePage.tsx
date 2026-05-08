@@ -97,6 +97,8 @@ import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { useFolders } from '@/hooks/useFolders';
+import { usePrefetchQueue } from '@/hooks/usePrefetchQueue';
+import { getCached, setCached } from '@/services/messageCache';
 import { MediaType } from '@/types/telegram';
 
 type UiMsg = {
@@ -209,14 +211,53 @@ const QueuePage = () => {
   const currentChat = state.chats.find(c => c.id === currentChatId) || state.contacts?.find(c => c.id === currentChatId);
   const [chatTitles, setChatTitles] = useState<Record<number, string>>({});
 
+  // Prefetch the next 1-2 chats in the queue.
+  usePrefetchQueue(queueIds, currentIndex);
+
   useEffect(() => {
     if (!currentChatId) return;
-    loadMessages(currentChatId).catch(() => {});
+    let cancelled = false;
+
+    const run = async () => {
+      // 1. Hydrate from cache instantly.
+      const cached = await getCached(currentChatId);
+      if (cancelled) return;
+      if (cached && cached.messages.length > 0) {
+        dispatch({
+          type: "SET_MESSAGES",
+          payload: { chatId: currentChatId, messages: cached.messages },
+        });
+      }
+
+      // 2. Fresh fetch (existing behaviour).
+      try {
+        await loadMessages(currentChatId);
+      } catch {
+        // ignore
+      }
+      if (cancelled) return;
+
+      // 3. Persist whatever the latest state is for next time.
+      const fresh = state.messages[currentChatId] ?? [];
+      if (fresh.length > 0) {
+        await setCached(currentChatId, fresh);
+      }
+    };
+
+    run();
+
     if (!currentChat && !chatTitles[currentChatId]) {
-      telegramApi.getChatInfo(currentChatId).then(info => {
-        setChatTitles(prev => ({ ...prev, [currentChatId]: info.title }));
-      }).catch(() => {});
+      telegramApi
+        .getChatInfo(currentChatId)
+        .then((info) => {
+          setChatTitles((prev) => ({ ...prev, [currentChatId]: info.title }));
+        })
+        .catch(() => {});
     }
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChatId]);
 
