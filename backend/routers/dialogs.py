@@ -11,6 +11,7 @@ from pyrogram import Client
 
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
+from services.folder_service import FolderService
 from services.queue_service import QueueService
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ def make_router(
     manager: PyrogramClientManager,
     auth: AuthDeps,
     queue_service: QueueService,
+    folder_service: FolderService,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -177,6 +179,20 @@ def make_router(
             logger.warning("get_contacts() failed, returning empty contacts", exc_info=True)
         return out
 
+    async def _attach_folder_ids(
+        items: list[dict[str, Any]], account: str
+    ) -> None:
+        """Decorate each dialog with folder_ids from FolderService cache."""
+        try:
+            payload = await folder_service.get_folders(account=account)
+        except Exception:
+            logger.warning("FolderService.get_folders failed", exc_info=True)
+            payload = {"chat_to_folders": {}}
+        c2f = payload.get("chat_to_folders", {})
+        for item in items:
+            cid = int(item["chat_id"])
+            item["folder_ids"] = list(c2f.get(cid, []))
+
     @router.get("/contacts")
     async def get_contacts(account: str = ""):
         return {"contacts": await _get_contacts_payload(account)}
@@ -185,6 +201,7 @@ def make_router(
     async def get_dialogs(limit: int = 100, account: str = ""):
         client = await auth.get_authorized_client(account)
         payload = await _build_dialogs_and_queue(client, limit=limit)
+        await _attach_folder_ids(payload["dialogs"], account)
         return {"dialogs": payload["dialogs"]}
 
     @router.get("/bootstrap")
@@ -193,6 +210,9 @@ def make_router(
         dialogs_task = asyncio.create_task(_build_dialogs_and_queue(client, limit=limit))
         contacts_task = asyncio.create_task(_get_contacts_payload(account))
         dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
+        # Tell FolderService which chats are archived (handler uses this).
+        folder_service.set_archived(account, dialogs_payload["archived_ids"])
+        await _attach_folder_ids(dialogs_payload["dialogs"], account)
         queue_ids = dialogs_payload["queue"]
         await queue_service.replace(account, queue_ids)
         return {

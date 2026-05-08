@@ -27,6 +27,7 @@ from routers import messages as messages_router
 from routers import queue as queue_router
 from routers import tasks as tasks_router
 from services.claude_client import ClaudeClient, ClaudeConfig
+from services.folder_service import FolderService
 from services.queue_service import QueueService
 from services.state_store import JsonStore
 from services.task_store import TaskStore
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     cfg = load_config()
     manager = PyrogramClientManager(cfg)
     queue_service = QueueService()
+    folder_service = FolderService(manager)
     auth_deps = AuthDeps(manager)
 
     # Wire incoming handler factory once.
@@ -93,9 +95,9 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(auth_router.make_router(manager))
-    app.include_router(dialogs_router.make_router(manager, auth_deps, queue_service))
+    app.include_router(dialogs_router.make_router(manager, auth_deps, queue_service, folder_service))
     app.include_router(messages_router.make_router(manager, auth_deps))
-    app.include_router(queue_router.make_router(manager, auth_deps, queue_service))
+    app.include_router(queue_router.make_router(manager, auth_deps, queue_service, folder_service))
     app.include_router(tasks_router.make_router(task_store))
     app.include_router(ai_router.make_router(claude_client, auth_deps))
 
