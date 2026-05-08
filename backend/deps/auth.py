@@ -14,14 +14,12 @@ class AuthDeps:
         self._manager = manager
 
     async def get_authorized_client(self, account: str = "") -> Client:
-        client = (
-            self._manager.get_or_create(account)
-            if account
-            else self._manager.default
-        )
+        key = (account or "").strip()
+        client = self._manager.get_or_create(key) if key else self._manager.default
         await self._manager.ensure_connected(client)
         try:
-            await client.get_me()
+            await self._manager.is_authed(key)
         except Exception:
+            self._manager.invalidate_auth(key)
             raise HTTPException(status_code=401, detail="Not authorized")
         return client

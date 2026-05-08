@@ -23,6 +23,7 @@ class PyrogramClientManager:
         self._cfg = cfg
         self._clients: dict[str, Client] = {}
         self._handler_factory: Optional[Callable[[Client, str], Callable]] = None
+        self._authed: dict[str, bool] = {}
 
         proxy = cfg.proxy.to_pyrogram_dict() if cfg.proxy else None
         self._default = Client(
@@ -66,6 +67,23 @@ class PyrogramClientManager:
             client.add_handler(MessageHandler(handler, filters.incoming & ~filters.service))
         self._clients[key] = client
         return client
+
+    async def is_authed(self, account: str) -> bool:
+        key = (account or "").strip()
+        if self._authed.get(key):
+            return True
+        client = self.get_or_create(key)
+        await self.ensure_connected(client)
+        try:
+            await client.get_me()
+        except Exception:
+            self._authed.pop(key, None)
+            raise
+        self._authed[key] = True
+        return True
+
+    def invalidate_auth(self, account: str) -> None:
+        self._authed.pop((account or "").strip(), None)
 
     async def ensure_connected(self, client: Client) -> None:
         if not client.is_connected:
