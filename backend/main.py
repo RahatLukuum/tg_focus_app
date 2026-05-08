@@ -23,6 +23,7 @@ from handlers.incoming import make_incoming_handler
 from routers import ai as ai_router
 from routers import auth as auth_router
 from routers import dialogs as dialogs_router
+from routers import folders as folders_router
 from routers import messages as messages_router
 from routers import queue as queue_router
 from routers import tasks as tasks_router
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(messages_router.make_router(manager, auth_deps))
     app.include_router(queue_router.make_router(manager, auth_deps, queue_service, folder_service))
     app.include_router(tasks_router.make_router(task_store))
+    app.include_router(folders_router.make_router(folder_service))
     app.include_router(ai_router.make_router(claude_client, auth_deps))
 
     @app.get("/")
@@ -112,6 +114,7 @@ def create_app() -> FastAPI:
                 "/auth/sign_in",
                 "/me",
                 "/dialogs",
+                "/folders",
                 "/messages",
                 "/send_message",
                 "/queue",
