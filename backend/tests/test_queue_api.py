@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from routers.queue import make_router
+from services.queue_meta_cache import QueueMetaCache
 from services.queue_service import QueueService
 
 
@@ -35,7 +36,16 @@ def app_factory():
         auth = MagicMock()
         auth.get_authorized_client = AsyncMock(return_value=MagicMock())
         folder_svc = _FakeFolderService(chat_to_folders)
-        app.include_router(make_router(manager, auth, qs, folder_svc))
+        app.include_router(
+            make_router(
+                manager=manager,
+                auth=auth,
+                queue_service=qs,
+                folder_service=folder_svc,
+                topics_service=MagicMock(),
+                queue_meta_cache=QueueMetaCache(ttl_seconds=30),
+            )
+        )
         return app, qs
 
     return _build
@@ -56,8 +66,22 @@ async def test_queue_meta_true_returns_objects_with_folder_ids(app_factory):
     assert r.status_code == 200
     assert r.json() == {
         "queue": [
-            {"chat_id": 1, "folder_ids": [2, 3], "snooze_until": None},
-            {"chat_id": 2, "folder_ids": [], "snooze_until": None},
+            {
+                "chat_id": 1,
+                "folder_ids": [2, 3],
+                "snooze_until": None,
+                "topic_id": None,
+                "topic_title": None,
+                "last_message": None,
+            },
+            {
+                "chat_id": 2,
+                "folder_ids": [],
+                "snooze_until": None,
+                "topic_id": None,
+                "topic_title": None,
+                "last_message": None,
+            },
         ],
         "snoozed": [],
     }
