@@ -35,6 +35,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         chat_id: int,
         limit: int = 50,
         before_id: Optional[int] = None,
+        topic_id: Optional[int] = None,
         account: str = "",
     ):
         client = await auth.get_authorized_client(account)
@@ -45,6 +46,8 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 kwargs["max_id"] = int(before_id) - 1
             except Exception:
                 logger.debug("invalid before_id value %r, ignoring", before_id, exc_info=True)
+        if topic_id is not None:
+            kwargs["message_thread_id"] = int(topic_id)
         async for m in client.get_chat_history(chat_id, **kwargs):
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
@@ -69,11 +72,14 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         chat_id: int,
         since_id: int,
         limit: int = 50,
+        topic_id: Optional[int] = None,
         account: str = "",
     ):
         client = await auth.get_authorized_client(account)
         history: list[dict[str, Any]] = []
         kwargs: dict[str, Any] = {"limit": limit, "min_id": int(since_id)}
+        if topic_id is not None:
+            kwargs["message_thread_id"] = int(topic_id)
         async for m in client.get_chat_history(chat_id, **kwargs):
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
@@ -199,14 +205,18 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         chat_id = payload.get("chat_id")
         text = payload.get("text")
         reply_to_message_id = payload.get("reply_to_message_id")
+        message_thread_id = payload.get("message_thread_id")
         if chat_id is None or not text:
             raise HTTPException(status_code=400, detail="chat_id and text are required")
         client = manager.get_or_create(account) if account else manager.default
         await manager.ensure_connected(client)
         try:
-            sent = await client.send_message(
-                chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id
-            )
+            kwargs: dict[str, Any] = {"chat_id": chat_id, "text": text}
+            if reply_to_message_id is not None:
+                kwargs["reply_to_message_id"] = reply_to_message_id
+            if message_thread_id is not None:
+                kwargs["message_thread_id"] = int(message_thread_id)
+            sent = await client.send_message(**kwargs)
             return {"ok": True, "message_id": sent.id}
         except Exception as e:
             logger.warning("send_message to chat %s failed: %s", chat_id, e)
