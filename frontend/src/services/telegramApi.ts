@@ -284,22 +284,34 @@ class TelegramApiService {
     };
   }
 
-  async sendMedia(chatId: number, file: Blob, mediaType: MediaType, caption?: string): Promise<Message> {
+  async sendMedia(
+    chatId: number,
+    file: Blob,
+    mediaType: MediaType,
+    caption?: string,
+    topicId?: number,
+  ): Promise<Message> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const form = new FormData();
     form.append('chat_id', String(chatId));
     form.append('media_type', mediaType);
     form.append('caption', caption || '');
     if (this.activeAccount) form.append('account', this.activeAccount);
-    const fileType = file.type || '';
-    const ext = mediaType === 'photo'
-      ? '.jpg'
-      : mediaType === 'video'
-        ? '.mp4'
-        : mediaType === 'voice'
-          ? '.ogg'
-          : '.bin';
-    form.append('file', file, `upload${ext}`);
+    if (topicId !== undefined) form.append('message_thread_id', String(topicId));
+
+    const ext =
+      mediaType === 'photo' ? '.jpg' :
+      mediaType === 'video' ? '.mp4' :
+      mediaType === 'video_note' ? '.mp4' :
+      mediaType === 'voice' ? '.ogg' :
+      mediaType === 'audio' ? '.mp3' :
+      '.bin';
+    // Preserve original filename when caller provides a File (has .name).
+    const inferredName = (file as File).name && typeof (file as File).name === "string"
+      ? (file as File).name
+      : `upload${ext}`;
+    form.append('file', file, inferredName);
+
     const url = this.baseUrl + this.withAccountQuery('/send_media');
     const res = await fetch(url, { method: 'POST', body: form });
     if (!res.ok) {
@@ -309,14 +321,9 @@ class TelegramApiService {
     const data = await res.json().catch(() => ({}));
     const messageId = data.message_id || Date.now();
     const mediaPath = `/media/${chatId}/${messageId}`;
-    
+
     let senderId = 0;
-    try {
-      const currentUser = await this.getCurrentUser();
-      senderId = currentUser.id;
-    } catch {
-      // ignore
-    }
+    try { senderId = (await this.getCurrentUser()).id; } catch { /* ignore */ }
 
     return {
       id: messageId,
@@ -327,6 +334,10 @@ class TelegramApiService {
       isOutgoing: true,
       mediaType,
       mediaUrl: this.baseUrl + this.withAccountQuery(mediaPath),
+      fileName: (file as File).name ?? undefined,
+      fileSize: file.size ?? undefined,
+      mimeType: file.type || undefined,
+      topicId,
     };
   }
 

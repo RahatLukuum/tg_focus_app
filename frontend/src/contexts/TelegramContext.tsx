@@ -133,7 +133,7 @@ interface TelegramContextType {
   signIn: (code: string) => Promise<void>;
   signInWithPassword: (password: string) => Promise<void>;
   sendMessage: (chatId: number, text: string, topicId?: number) => Promise<void>;
-  sendMedia: (chatId: number, file: Blob, mediaType: MediaType, caption?: string) => Promise<void>;
+  sendMedia: (chatId: number, file: Blob, mediaType: MediaType, caption?: string, topicId?: number) => Promise<void>;
   loadChats: (force?: boolean) => Promise<void>;
   loadMessages: (chatId: number) => Promise<void>;
   loadOlderMessages: (chatId: number) => Promise<void>;
@@ -246,9 +246,9 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  const sendMedia = async (chatId: number, file: Blob, mediaType: MediaType, caption?: string) => {
+  const sendMedia = async (chatId: number, file: Blob, mediaType: MediaType, caption?: string, topicId?: number) => {
     try {
-      const message = await telegramApi.sendMedia(chatId, file, mediaType, caption);
+      const message = await telegramApi.sendMedia(chatId, file, mediaType, caption, topicId);
       dispatch({ type: 'ADD_MESSAGE', payload: message });
     } catch (error: any) {
       console.error('Ошибка отправки медиа:', error);
