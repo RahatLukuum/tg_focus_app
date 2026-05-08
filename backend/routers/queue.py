@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -52,8 +53,6 @@ def make_router(
 
     @router.post("/queue/action")
     async def queue_action(payload: dict[str, Any]):
-        import time
-
         chat_id = payload.get("chat_id")
         action = str(payload.get("action", "")).lower()
         valid = {"done", "postpone", "task", "snooze", "skip"}
