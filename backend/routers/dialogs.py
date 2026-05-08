@@ -1,0 +1,261 @@
+"""Dialog list, contacts, chat info, bootstrap, contact resolution."""
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import Any, Optional
+
+from fastapi import APIRouter, HTTPException
+from pyrogram import Client
+
+from deps.auth import AuthDeps
+from deps.pyrogram_clients import PyrogramClientManager
+from services.queue_service import QueueService
+
+try:
+    from pyrogram.raw.functions.contacts import ImportContacts  # type: ignore
+    from pyrogram.raw.types import InputPhoneContact  # type: ignore
+except Exception:
+    ImportContacts = None  # type: ignore
+    InputPhoneContact = None  # type: ignore
+
+
+def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
+    chat = getattr(d, "chat", None)
+    if not chat:
+        return None
+    try:
+        ctype = getattr(chat, "type", None)
+        type_name = (
+            getattr(ctype, "value", None)
+            or (str(ctype).lower() if ctype is not None else "")
+        )
+    except Exception:
+        type_name = ""
+    if type_name not in ("private", "group", "supergroup"):
+        return None
+    last_text = (
+        (getattr(d.top_message, "text", None) or getattr(d.top_message, "caption", None) or "").strip()
+        if getattr(d, "top_message", None)
+        else None
+    )
+    if last_text == "":
+        last_text = None
+    title = getattr(chat, "title", None)
+    if not title:
+        first_name = getattr(chat, "first_name", None) or ""
+        last_name = getattr(chat, "last_name", None) or ""
+        title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat.id)
+    return {
+        "chat_id": chat.id,
+        "title": title,
+        "type": type_name,
+        "username": getattr(chat, "username", None),
+        "unread_count": getattr(d, "unread_messages_count", 0),
+        "last_message_text": last_text,
+    }
+
+
+async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str, Any]:
+    dialogs: list[dict[str, Any]] = []
+    queue_ids: list[int] = []
+    seen: set[int] = set()
+    async for d in client.get_dialogs(limit=limit):
+        item = _map_dialog(d)
+        if not item:
+            continue
+        dialogs.append(item)
+        if item["type"] == "private" and int(item.get("unread_count", 0) or 0) > 0:
+            cid = int(item["chat_id"])
+            if cid not in seen:
+                seen.add(cid)
+                queue_ids.append(cid)
+    return {"dialogs": dialogs, "queue": queue_ids}
+
+
+def _normalize_phone_e164(phone: str) -> str:
+    digits = re.sub(r"\D+", "", phone or "")
+    if not digits:
+        return phone
+    if len(digits) == 11 and (digits.startswith("8") or digits.startswith("7")):
+        return "+7" + digits[1:]
+    if len(digits) == 10:
+        return "+7" + digits
+    if digits.startswith("7"):
+        return "+" + digits
+    return phone if phone.startswith("+") else ("+" + digits)
+
+
+async def _resolve_user_by_phone(client: Client, phone: str) -> Optional[int]:
+    if ImportContacts is None or InputPhoneContact is None:
+        return None
+    try:
+        normalized = _normalize_phone_e164(phone)
+        result = await client.invoke(
+            ImportContacts(
+                contacts=[
+                    InputPhoneContact(
+                        client_id=0, phone=normalized, first_name=".", last_name=""
+                    )
+                ]
+            )
+        )
+        users = getattr(result, "users", []) or []
+        for u in users:
+            uid = getattr(u, "id", None)
+            if uid:
+                return int(uid)
+    except Exception:
+        return None
+    return None
+
+
+def make_router(
+    manager: PyrogramClientManager,
+    auth: AuthDeps,
+    queue_service: QueueService,
+) -> APIRouter:
+    router = APIRouter()
+
+    async def _get_contacts_payload(account: str) -> list[dict[str, Any]]:
+        client = manager.get_or_create(account) if account else manager.default
+        await manager.ensure_connected(client)
+        try:
+            await client.get_me()
+        except Exception:
+            raise HTTPException(status_code=401, detail="Not authorized")
+        out: list[dict[str, Any]] = []
+        try:
+            users = await client.get_contacts()
+            for u in users:
+                first = getattr(u, "first_name", None) or ""
+                last = getattr(u, "last_name", None) or ""
+                title = (first + (" " + last if last else "")).strip() or str(u.id)
+                out.append(
+                    {
+                        "chat_id": u.id,
+                        "title": title,
+                        "type": "private",
+                        "username": getattr(u, "username", None),
+                        "phone": getattr(u, "phone_number", None),
+                    }
+                )
+        except Exception:
+            pass
+        return out
+
+    @router.get("/contacts")
+    async def get_contacts(account: str = ""):
+        return {"contacts": await _get_contacts_payload(account)}
+
+    @router.get("/dialogs")
+    async def get_dialogs(limit: int = 100, account: str = ""):
+        client = await auth.get_authorized_client(account)
+        payload = await _build_dialogs_and_queue(client, limit=limit)
+        return {"dialogs": payload["dialogs"]}
+
+    @router.get("/bootstrap")
+    async def get_bootstrap(limit: int = 100, account: str = ""):
+        client = await auth.get_authorized_client(account)
+        dialogs_task = asyncio.create_task(_build_dialogs_and_queue(client, limit=limit))
+        contacts_task = asyncio.create_task(_get_contacts_payload(account))
+        dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
+        queue_ids = dialogs_payload["queue"]
+        await queue_service.replace(account, queue_ids)
+        return {
+            "dialogs": dialogs_payload["dialogs"],
+            "contacts": contacts_payload,
+            "queue": queue_ids,
+        }
+
+    @router.get("/chat_info")
+    async def chat_info(chat_id: int, account: str = ""):
+        client = await auth.get_authorized_client(account)
+        try:
+            ch = await client.get_chat(chat_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        try:
+            ctype = getattr(ch, "type", None)
+            type_name = (
+                getattr(ctype, "value", None)
+                or (str(ctype).lower() if ctype is not None else "")
+            )
+        except Exception:
+            type_name = ""
+        title = getattr(ch, "title", None)
+        if not title:
+            first_name = getattr(ch, "first_name", None) or ""
+            last_name = getattr(ch, "last_name", None) or ""
+            title = (first_name + (" " + last_name if last_name else "")).strip() or str(chat_id)
+        return {
+            "chat": {
+                "chat_id": int(getattr(ch, "id", chat_id)),
+                "title": title,
+                "type": type_name,
+                "username": getattr(ch, "username", None),
+            }
+        }
+
+    @router.post("/resolve_contact")
+    async def resolve_contact(payload: dict[str, Any]):
+        account = str(payload.get("account", "")).strip()
+        client = manager.get_or_create(account) if account else manager.default
+        await manager.ensure_connected(client)
+
+        user_id = payload.get("user_id")
+        phone = payload.get("phone")
+        username = payload.get("username")
+        if not user_id and not phone and not username:
+            raise HTTPException(status_code=400, detail="user_id or phone or username is required")
+
+        if user_id:
+            try:
+                uid = int(user_id)
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid user_id")
+            return {"ok": True, "user_id": uid, "chat_id": uid}
+
+        if phone:
+            raw_phone = str(phone).strip()
+            uid = await _resolve_user_by_phone(client, raw_phone)
+            if uid:
+                return {"ok": True, "user_id": uid, "chat_id": uid}
+            digits_only = re.sub(r"\D+", "", raw_phone)
+            if digits_only:
+                try:
+                    fallback_uid = int(digits_only)
+                except (ValueError, OverflowError):
+                    fallback_uid = None
+                if fallback_uid is not None:
+                    return {"ok": True, "user_id": fallback_uid, "chat_id": fallback_uid}
+            raise HTTPException(status_code=404, detail="User not found by phone")
+
+        if username:
+            uname = str(username).strip()
+            if uname.startswith("@"):
+                uname = uname[1:]
+            try:
+                ch = await client.get_chat(uname)
+                try:
+                    ctype = getattr(ch, "type", None)
+                    type_name = (
+                        getattr(ctype, "value", None)
+                        or (str(ctype).lower() if ctype is not None else "")
+                    )
+                except Exception:
+                    type_name = ""
+                if type_name and type_name != "private":
+                    raise HTTPException(status_code=400, detail="Username is not a private user")
+                uid = getattr(ch, "id", None)
+                if not uid:
+                    raise HTTPException(status_code=404, detail="User not found by username")
+                return {"ok": True, "user_id": int(uid), "chat_id": int(uid)}
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=404, detail="User not found by username")
+
+        raise HTTPException(status_code=400, detail="invalid payload")
+
+    return router

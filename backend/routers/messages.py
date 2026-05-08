@@ -1,0 +1,177 @@
+"""Message history, send, media (download/upload)."""
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pyrogram import Client
+
+from deps.auth import AuthDeps
+from deps.pyrogram_clients import PyrogramClientManager
+from services.media_utils import extract_media_info
+
+
+def _format_sender(m) -> Optional[str]:
+    if m.from_user:
+        first = getattr(m.from_user, "first_name", None) or ""
+        last = getattr(m.from_user, "last_name", None) or ""
+        return (first + (" " + last if last else "")).strip() or None
+    if getattr(m, "sender_chat", None):
+        return getattr(m.sender_chat, "title", None)
+    return None
+
+
+def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/messages")
+    async def get_messages(
+        chat_id: int,
+        limit: int = 50,
+        before_id: Optional[int] = None,
+        account: str = "",
+    ):
+        client = await auth.get_authorized_client(account)
+        history: list[dict[str, Any]] = []
+        kwargs: dict[str, Any] = {"limit": limit}
+        if before_id:
+            try:
+                kwargs["max_id"] = int(before_id) - 1
+            except Exception:
+                pass
+        async for m in client.get_chat_history(chat_id, **kwargs):
+            text_content = (m.text or m.caption or "").strip()
+            media_info = extract_media_info(m, chat_id=chat_id)
+            if not text_content and not media_info:
+                continue
+            sender_name = _format_sender(m) if not m.outgoing else None
+            entry: dict[str, Any] = {
+                "id": m.id,
+                "text": text_content,
+                "date": int(m.date.timestamp()) if m.date else None,
+                "from_user_id": m.from_user.id if m.from_user else None,
+                "from_user_name": sender_name,
+                "outgoing": m.outgoing,
+            }
+            entry.update(media_info)
+            history.append(entry)
+        history.reverse()
+        return {"chat_id": chat_id, "messages": history}
+
+    @router.get("/media/{chat_id}/{message_id}")
+    async def get_media(chat_id: int, message_id: int, account: str = ""):
+        client = await auth.get_authorized_client(account)
+        try:
+            msgs = [
+                m
+                async for m in client.get_chat_history(
+                    chat_id, limit=1, offset_id=message_id + 1
+                )
+            ]
+            if not msgs or msgs[0].id != message_id:
+                raise HTTPException(status_code=404, detail="Message not found")
+            msg = msgs[0]
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+        try:
+            buf = await client.download_media(msg, in_memory=True)
+            if buf is None:
+                raise HTTPException(status_code=404, detail="Failed to download media")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        buf.seek(0)
+
+        ct = "application/octet-stream"
+        if msg.photo:
+            ct = "image/jpeg"
+        elif msg.video or msg.video_note:
+            ct = "video/mp4"
+        elif msg.voice:
+            ct = "audio/ogg"
+        elif msg.document:
+            mime = getattr(msg.document, "mime_type", None)
+            if mime:
+                ct = mime
+        return StreamingResponse(buf, media_type=ct)
+
+    @router.post("/send_media")
+    async def api_send_media(
+        chat_id: int = Form(...),
+        media_type: str = Form(...),
+        account: str = Form(""),
+        caption: str = Form(""),
+        file: UploadFile = File(...),
+    ):
+        client = await auth.get_authorized_client(account)
+        if not getattr(client, "me", None):
+            try:
+                client.me = await client.get_me()
+            except Exception:
+                pass
+
+        suffix = Path(file.filename or "file").suffix
+        if not suffix:
+            suffix = ".ogg" if media_type == "voice" else ".bin"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp_path: Optional[str] = None
+        try:
+            content = await file.read()
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = tmp.name
+            tmp.close()
+
+            sent = None
+            if media_type == "photo":
+                sent = await client.send_photo(chat_id=chat_id, photo=tmp_path, caption=caption or None)
+            elif media_type == "video":
+                sent = await client.send_video(chat_id=chat_id, video=tmp_path, caption=caption or None)
+            elif media_type == "voice":
+                sent = await client.send_voice(chat_id=chat_id, voice=tmp_path, caption=caption or None)
+            elif media_type == "document":
+                sent = await client.send_document(chat_id=chat_id, document=tmp_path, caption=caption or None)
+            else:
+                raise HTTPException(status_code=400, detail="Unknown media_type")
+            sent_id = sent.id if sent else None
+            return {
+                "ok": True,
+                "message_id": sent_id,
+                "media_type": media_type,
+                "media_url": f"/media/{chat_id}/{sent_id}" if sent_id else None,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        finally:
+            try:
+                if tmp_path:
+                    Path(tmp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    @router.post("/send_message")
+    async def api_send_message(payload: dict[str, Any]):
+        account = str(payload.get("account", "")).strip()
+        chat_id = payload.get("chat_id")
+        text = payload.get("text")
+        reply_to_message_id = payload.get("reply_to_message_id")
+        if chat_id is None or not text:
+            raise HTTPException(status_code=400, detail="chat_id and text are required")
+        client = manager.get_or_create(account) if account else manager.default
+        await manager.ensure_connected(client)
+        try:
+            sent = await client.send_message(
+                chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id
+            )
+            return {"ok": True, "message_id": sent.id}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return router
