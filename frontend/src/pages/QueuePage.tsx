@@ -98,6 +98,7 @@ import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { useFolders } from '@/hooks/useFolders';
 import { usePrefetchQueue } from '@/hooks/usePrefetchQueue';
+import { QueueFolderFilter } from '@/components/queue/QueueFolderFilter';
 import { getCached, setCached } from '@/services/messageCache';
 import { MediaType } from '@/types/telegram';
 
@@ -142,6 +143,7 @@ const QueuePage = () => {
   }>>>({});
   const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, loadChats, dispatch } = useTelegram();
   const { folders, chatToFolders } = useFolders();
+  const [folderFilter, setFolderFilter] = useState<number[]>([]);
   const historyRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
@@ -207,12 +209,20 @@ const QueuePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.queueRevision]);
 
-  const currentChatId = queueIds[currentIndex];
+  const visibleQueueIds = useMemo(() => {
+    if (folderFilter.length === 0) return queueIds;
+    return queueIds.filter((cid) => {
+      const folders = chatToFolders.get(cid) ?? [];
+      return folders.some((id) => folderFilter.includes(id));
+    });
+  }, [queueIds, folderFilter, chatToFolders]);
+
+  const currentChatId = visibleQueueIds[currentIndex];
   const currentChat = state.chats.find(c => c.id === currentChatId) || state.contacts?.find(c => c.id === currentChatId);
   const [chatTitles, setChatTitles] = useState<Record<number, string>>({});
 
   // Prefetch the next 1-2 chats in the queue.
-  usePrefetchQueue(queueIds, currentIndex);
+  usePrefetchQueue(visibleQueueIds, currentIndex);
 
   useEffect(() => {
     if (!currentChatId) return;
@@ -499,9 +509,11 @@ const QueuePage = () => {
           )}
         </div>
         <div className="text-sm text-muted-foreground tabular-nums shrink-0 w-[4.5rem] text-right">
-          {queueIds.length > 0 ? `${currentIndex + 1} / ${queueIds.length}` : '—'}
+          {visibleQueueIds.length > 0 ? `${currentIndex + 1} / ${visibleQueueIds.length}` : '—'}
         </div>
       </div>
+
+      <QueueFolderFilter onChange={setFolderFilter} />
 
       {/* Dialog */}
       <div className="flex-1 flex items-center justify-center p-4">
