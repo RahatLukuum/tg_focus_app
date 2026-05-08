@@ -229,18 +229,19 @@ const QueuePage = () => {
         });
       }
 
-      // 2. Fresh fetch (existing behaviour).
+      // 2. Fetch fresh — direct call so we have a non-stale reference to cache.
       try {
-        await loadMessages(currentChatId);
+        const fresh = await telegramApi.getMessages(currentChatId);
+        if (cancelled) return;
+        dispatch({
+          type: "SET_MESSAGES",
+          payload: { chatId: currentChatId, messages: fresh },
+        });
+        if (fresh.length > 0) {
+          await setCached(currentChatId, fresh);
+        }
       } catch {
-        // ignore
-      }
-      if (cancelled) return;
-
-      // 3. Persist whatever the latest state is for next time.
-      const fresh = state.messages[currentChatId] ?? [];
-      if (fresh.length > 0) {
-        await setCached(currentChatId, fresh);
+        // network failure — keep showing cache
       }
     };
 

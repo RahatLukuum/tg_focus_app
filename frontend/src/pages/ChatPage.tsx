@@ -220,21 +220,27 @@ const ChatPage = () => {
           console.warn("delta sync failed:", e);
         }
       } else {
-        // No cache — full load via existing path.
+        // No cache — fetch directly so we have a non-stale reference for caching.
         try {
-          if (shouldPreloadFull) {
-            await preloadFullChatHistory(numericChatId);
-          } else {
-            await loadMessages(numericChatId);
+          const fresh = await telegramApi.getMessages(numericChatId);
+          if (cancelled) return;
+          dispatch({
+            type: "SET_MESSAGES",
+            payload: { chatId: numericChatId, messages: fresh },
+          });
+          if (fresh.length > 0) {
+            await setCached(numericChatId, fresh);
           }
-        } catch {}
+          if (shouldPreloadFull) {
+            // preloadFullChatHistory paginates older messages too — keep it
+            // for full preload when explicitly requested.
+            await preloadFullChatHistory(numericChatId);
+          }
+        } catch (e) {
+          console.warn("ChatPage initial load failed:", e);
+        }
         if (cancelled) return;
         scrollToBottom();
-        // Persist what we just loaded.
-        const fresh = state.messages[numericChatId] ?? [];
-        if (fresh.length > 0) {
-          await setCached(numericChatId, fresh);
-        }
       }
     };
 
