@@ -37,6 +37,7 @@ class AppConfig:
     session_dir: Path
     anthropic_api_key: str
     proxy: Optional[ProxyConfig]
+    cors_allowed_origins: tuple[str, ...]
 
 
 def load_config() -> AppConfig:
@@ -50,6 +51,11 @@ def load_config() -> AppConfig:
     proxy = _load_proxy()
     anthropic_api_key = config("ANTHROPIC_API_KEY", default="")
 
+    raw_origins = config("CORS_ALLOWED_ORIGINS", default="")
+    cors_allowed_origins = tuple(
+        o.strip() for o in raw_origins.split(",") if o.strip()
+    )
+
     return AppConfig(
         api_id=api_id,
         api_hash=api_hash,
@@ -57,6 +63,7 @@ def load_config() -> AppConfig:
         session_dir=session_dir,
         anthropic_api_key=anthropic_api_key,
         proxy=proxy,
+        cors_allowed_origins=cors_allowed_origins,
     )
 
 

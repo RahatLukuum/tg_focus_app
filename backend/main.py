@@ -13,6 +13,8 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pyrogram import filters
+from pyrogram.handlers import MessageHandler
 
 from config import load_config
 from deps.auth import AuthDeps
@@ -33,108 +35,120 @@ from ws.broadcaster import broadcaster
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-cfg = load_config()
-manager = PyrogramClientManager(cfg)
-queue_service = QueueService()
-auth_deps = AuthDeps(manager)
 
-# Wire incoming handler factory once.
-manager.set_incoming_handler_factory(
-    lambda client, account: make_incoming_handler(queue_service, broadcaster, account)
-)
+def create_app() -> FastAPI:
+    """Build and return the FastAPI application."""
+    cfg = load_config()
+    manager = PyrogramClientManager(cfg)
+    queue_service = QueueService()
+    auth_deps = AuthDeps(manager)
 
-# Attach handler to default client too (it doesn't go through get_or_create).
-from pyrogram import filters as _filters
-from pyrogram.handlers import MessageHandler as _MessageHandler
+    # Wire incoming handler factory once.
+    manager.set_incoming_handler_factory(
+        lambda client, account: make_incoming_handler(queue_service, broadcaster, account)
+    )
 
-_default_handler = make_incoming_handler(queue_service, broadcaster, "")
-manager.default.add_handler(
-    _MessageHandler(_default_handler, _filters.incoming & ~_filters.service)
-)
+    # Attach handler to default client too (it doesn't go through get_or_create).
+    _default_handler = make_incoming_handler(queue_service, broadcaster, "")
+    manager.default.add_handler(
+        MessageHandler(_default_handler, filters.incoming & ~filters.service)
+    )
 
-# State stores.
-tasks_json = JsonStore(cfg.session_dir / "tasks.json", default_factory=list)
-task_store = TaskStore(tasks_json)
+    # State stores.
+    tasks_json = JsonStore(cfg.session_dir / "tasks.json", default_factory=list)
+    task_store = TaskStore(tasks_json)
 
-# Optional Claude client.
-claude_client: ClaudeClient | None = None
-if cfg.anthropic_api_key:
-    claude_client = ClaudeClient(ClaudeConfig(api_key=cfg.anthropic_api_key))
+    # Optional Claude client.
+    claude_client: ClaudeClient | None = None
+    if cfg.anthropic_api_key:
+        claude_client = ClaudeClient(ClaudeConfig(api_key=cfg.anthropic_api_key))
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        await manager.stop_all()
+        if claude_client is not None:
+            try:
+                await claude_client.aclose()
+            except Exception:
+                logger.warning("claude_client.aclose() failed", exc_info=True)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-    await manager.stop_all()
+    app = FastAPI(title="TG Backend API", lifespan=lifespan)
 
+    # Determine CORS settings: explicit origins → credentials allowed.
+    # No origins configured → permissive but no credentials (browser-safe).
+    if cfg.cors_allowed_origins:
+        cors_origins = list(cfg.cors_allowed_origins)
+        cors_credentials = True
+    else:
+        cors_origins = ["*"]
+        cors_credentials = False
 
-app = FastAPI(title="TG Backend API", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=cors_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    app.include_router(auth_router.make_router(manager))
+    app.include_router(dialogs_router.make_router(manager, auth_deps, queue_service))
+    app.include_router(messages_router.make_router(manager, auth_deps))
+    app.include_router(queue_router.make_router(manager, auth_deps, queue_service))
+    app.include_router(tasks_router.make_router(task_store))
+    app.include_router(ai_router.make_router(claude_client, auth_deps))
 
-app.include_router(auth_router.make_router(manager))
-app.include_router(dialogs_router.make_router(manager, auth_deps, queue_service))
-app.include_router(messages_router.make_router(manager, auth_deps))
-app.include_router(queue_router.make_router(manager, auth_deps, queue_service))
-app.include_router(tasks_router.make_router(task_store))
-app.include_router(ai_router.make_router(claude_client, auth_deps))
+    @app.get("/")
+    async def root() -> dict[str, Any]:
+        return {
+            "service": "TG Backend API",
+            "status": "ok",
+            "docs": "/docs",
+            "endpoints": [
+                "/auth/send_code",
+                "/auth/sign_in",
+                "/me",
+                "/dialogs",
+                "/messages",
+                "/send_message",
+                "/queue",
+                "/queue/action",
+                "/tasks",
+                "/generate_reply",
+                "/ws",
+            ],
+        }
 
+    @app.get("/healthz")
+    async def healthz() -> dict[str, bool]:
+        return {"ok": True}
 
-@app.get("/")
-async def root() -> dict[str, Any]:
-    return {
-        "service": "TG Backend API",
-        "status": "ok",
-        "docs": "/docs",
-        "endpoints": [
-            "/auth/send_code",
-            "/auth/sign_in",
-            "/me",
-            "/dialogs",
-            "/messages",
-            "/send_message",
-            "/queue",
-            "/queue/action",
-            "/tasks",
-            "/generate_reply",
-            "/ws",
-        ],
-    }
+    @app.websocket("/ws")
+    async def websocket_endpoint(ws: WebSocket):
+        await ws.accept()
+        broadcaster.add(ws)
+        try:
+            while True:
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            logger.warning("WebSocket loop error", exc_info=True)
+        finally:
+            broadcaster.remove(ws)
 
-
-@app.get("/healthz")
-async def healthz() -> dict[str, bool]:
-    return {"ok": True}
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await ws.accept()
-    broadcaster.add(ws)
     try:
-        while True:
-            await ws.receive_text()
-    except WebSocketDisconnect:
-        pass
+        DIST_DIR = (Path(__file__).parent / "frontend" / "dist").resolve()
+        if DIST_DIR.exists():
+            app.mount("/app", StaticFiles(directory=str(DIST_DIR), html=True), name="app")
     except Exception:
-        pass
-    finally:
-        broadcaster.remove(ws)
+        logger.warning("Failed to mount /app static dir", exc_info=True)
+
+    return app
 
 
-# Serve built frontend at /app for SPA mode (mounted last so router paths win).
-try:
-    DIST_DIR = (Path(__file__).parent / "frontend" / "dist").resolve()
-    if DIST_DIR.exists():
-        app.mount("/app", StaticFiles(directory=str(DIST_DIR), html=True), name="app")
-except Exception:
-    pass
+app = create_app()
 
 
 if __name__ == "__main__":
