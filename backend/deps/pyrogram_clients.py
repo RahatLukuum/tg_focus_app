@@ -23,6 +23,7 @@ class PyrogramClientManager:
         self._cfg = cfg
         self._clients: dict[str, Client] = {}
         self._handler_factory: Optional[Callable[[Client, str], Callable]] = None
+        self._outgoing_handler_factory: Optional[Callable[[Client, str], Callable]] = None
         self._authed: dict[str, bool] = {}
 
         proxy = cfg.proxy.to_pyrogram_dict() if cfg.proxy else None
@@ -48,6 +49,12 @@ class PyrogramClientManager:
         """Register a factory: factory(client, account) -> async handler(client, message)."""
         self._handler_factory = factory
 
+    def set_outgoing_handler_factory(
+        self, factory: Callable[[Client, str], Callable]
+    ) -> None:
+        """Register a factory: factory(client, account) -> async handler(client, message)."""
+        self._outgoing_handler_factory = factory
+
     def get_or_create(self, account: str) -> Client:
         key = account.strip()
         if not key:
@@ -65,6 +72,9 @@ class PyrogramClientManager:
         if self._handler_factory:
             handler = self._handler_factory(client, key)
             client.add_handler(MessageHandler(handler, filters.incoming & ~filters.service))
+        if self._outgoing_handler_factory is not None:
+            out_handler = self._outgoing_handler_factory(client, key)
+            client.add_handler(MessageHandler(out_handler, filters.outgoing & ~filters.service))
         self._clients[key] = client
         return client
 

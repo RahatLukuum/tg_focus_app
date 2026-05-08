@@ -21,6 +21,7 @@ from config import load_config
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from handlers.incoming import make_incoming_handler
+from handlers.outgoing import make_outgoing_handler
 from routers import ai as ai_router
 from routers import auth as auth_router
 from routers import dialogs as dialogs_router
@@ -28,12 +29,15 @@ from routers import folders as folders_router
 from routers import messages as messages_router
 from routers import queue as queue_router
 from routers import tasks as tasks_router
+from routers import topics as topics_router
 from services.claude_client import ClaudeClient, ClaudeConfig
 from services.folder_service import FolderService
+from services.queue_meta_cache import QueueMetaCache
 from services.queue_service import QueueService
 from services.snooze_worker import start_snooze_worker
 from services.state_store import JsonStore
 from services.task_store import TaskStore
+from services.topics_service import TopicsService
 from ws.broadcaster import broadcaster
 
 logging.basicConfig(level=logging.INFO)
@@ -50,17 +54,31 @@ def create_app() -> FastAPI:
     )
     queue_service = QueueService(store=queue_state_store)
     folder_service = FolderService(manager)
+    topics_service = TopicsService(manager)
+    queue_meta_cache = QueueMetaCache(ttl_seconds=30)
     auth_deps = AuthDeps(manager)
 
     # Wire incoming handler factory once.
     manager.set_incoming_handler_factory(
         lambda client, account: make_incoming_handler(queue_service, broadcaster, account, folder_service)
     )
+    manager.set_outgoing_handler_factory(
+        lambda client, account: make_outgoing_handler(
+            queue_service, broadcaster, account, queue_meta_cache=queue_meta_cache,
+        )
+    )
 
     # Attach handler to default client too (it doesn't go through get_or_create).
     _default_handler = make_incoming_handler(queue_service, broadcaster, "", folder_service)
     manager.default.add_handler(
         MessageHandler(_default_handler, filters.incoming & ~filters.service)
+    )
+    # Default-account outgoing handler (mirrors the default-account incoming wiring above).
+    _default_out_handler = make_outgoing_handler(
+        queue_service, broadcaster, "", queue_meta_cache=queue_meta_cache,
+    )
+    manager.default.add_handler(
+        MessageHandler(_default_out_handler, filters.outgoing & ~filters.service)
     )
 
     # State stores.
@@ -117,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(tasks_router.make_router(task_store))
     app.include_router(folders_router.make_router(folder_service))
     app.include_router(ai_router.make_router(claude_client, auth_deps))
+    app.include_router(topics_router.make_router(topics_service=topics_service, auth=auth_deps))
 
     @app.get("/")
     async def root() -> dict[str, Any]:
