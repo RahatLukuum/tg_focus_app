@@ -74,3 +74,7 @@ class ClaudeClient:
         )
         text_blocks = [b.text for b in resp.content if b.type == "text"]
         return "\n".join(text_blocks).strip()
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client. Call from app lifespan shutdown."""
+        await self._client.close()
