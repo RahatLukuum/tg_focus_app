@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause } from 'lucide-react';
+import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause, Folder } from 'lucide-react';
 import { toast } from 'sonner';
 
 const formatDuration = (s: number) => {
@@ -475,7 +475,7 @@ const QueuePage = () => {
                   <h2 className="text-lg font-semibold">{currentDialog.name}</h2>
                   {currentFolderLabel && (
                     <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <span aria-hidden>📁</span>
+                      <Folder className="h-3 w-3" aria-hidden />
                       <span>{currentFolderLabel}</span>
                     </p>
                   )}
