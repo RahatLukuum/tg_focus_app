@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { TelegramConfig, AuthState, Chat, Message, User, MediaType } from '@/types/telegram';
 import { telegramApi } from '@/services/telegramApi';
+import { appendCached } from "@/services/messageCache";
 
 interface TelegramState {
   config?: TelegramConfig;
@@ -346,6 +347,8 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (m.duration != null) mapped.duration = m.duration;
       }
       dispatch({ type: 'ADD_MESSAGE', payload: mapped });
+      // Persist new message to IndexedDB cache (best-effort, no await).
+      void appendCached(mapped.chatId, [mapped]).catch(() => {});
       if (!mapped.isOutgoing) {
         dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });
       }

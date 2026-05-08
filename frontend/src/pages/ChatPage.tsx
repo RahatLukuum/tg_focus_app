@@ -89,6 +89,7 @@ const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => 
 };
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
+import { getCached, setCached, appendCached } from "@/services/messageCache";
 import { MediaType } from '@/types/telegram';
 
 type UiMsg = {
@@ -181,18 +182,75 @@ const ChatPage = () => {
   }, [dispatch]);
 
   useEffect(() => {
-    if (!numericChatId || !state.isInitialized) return;
+    if (!state.isInitialized) return;
+    let cancelled = false;
+
     initialScrollDoneRef.current = false;
     prevMsgCountRef.current = 0;
-    const load = shouldPreloadFull ? preloadFullChatHistory(numericChatId) : loadMessages(numericChatId);
-    load.then(() => scrollToBottom()).catch(() => {});
+
+    const run = async () => {
+      // 1. Try cache first — render immediately if found.
+      const cached = await getCached(numericChatId);
+      if (cancelled) return;
+      let lastKnownId = 0;
+      if (cached && cached.messages.length > 0) {
+        dispatch({
+          type: "SET_MESSAGES",
+          payload: { chatId: numericChatId, messages: cached.messages },
+        });
+        lastKnownId = cached.messages[cached.messages.length - 1]?.id ?? 0;
+        scrollToBottom();
+      }
+
+      // 2. Fetch delta if we had a cache; otherwise full fetch.
+      if (lastKnownId > 0) {
+        try {
+          const newer = await telegramApi.getMessagesSince(numericChatId, lastKnownId);
+          if (cancelled || newer.length === 0) return;
+          dispatch({
+            type: "SET_MESSAGES",
+            payload: {
+              chatId: numericChatId,
+              messages: [...(cached?.messages ?? []), ...newer],
+            },
+          });
+          await appendCached(numericChatId, newer);
+          scrollToBottom();
+        } catch (e) {
+          console.warn("delta sync failed:", e);
+        }
+      } else {
+        // No cache — full load via existing path.
+        try {
+          if (shouldPreloadFull) {
+            await preloadFullChatHistory(numericChatId);
+          } else {
+            await loadMessages(numericChatId);
+          }
+        } catch {}
+        if (cancelled) return;
+        scrollToBottom();
+        // Persist what we just loaded.
+        const fresh = state.messages[numericChatId] ?? [];
+        if (fresh.length > 0) {
+          await setCached(numericChatId, fresh);
+        }
+      }
+    };
+
+    run();
+
     if (!contact) {
       telegramApi.getChatInfo(numericChatId).then(info => {
         setRemoteChatTitle(info.title);
       }).catch(() => {});
     }
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numericChatId, shouldPreloadFull, preloadFullChatHistory, state.isInitialized]);
+  }, [numericChatId, shouldPreloadFull, state.isInitialized]);
 
   useEffect(() => {
     const el = listRef.current;
