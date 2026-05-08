@@ -103,3 +103,21 @@ def test_account_filter(client: TestClient):
     client.post("/tasks", json={"text": "b", "account": "+79876543210"})
     r = client.get("/tasks", params={"account": "+71234567890"})
     assert [t["text"] for t in r.json()["tasks"]] == ["a"]
+
+
+def test_completed_route_takes_precedence_over_path_param(client: TestClient):
+    """/tasks/completed must be matched as a literal route, not as task_id='completed'.
+
+    Regression test: route registration order matters here.
+    """
+    # Create a task with id 'completed' would be ideal but ids are server-generated UUIDs.
+    # Instead verify that DELETE /tasks/completed returns the clear-completed shape, not a 404.
+    a = client.post("/tasks", json={"text": "a"}).json()["task"]
+    client.patch(f"/tasks/{a['id']}", json={"done": True})
+    r = client.delete("/tasks/completed")
+    assert r.status_code == 200
+    body = r.json()
+    assert "removed" in body  # clear-completed response shape
+    assert body["removed"] == 1
+    # Also verify it doesn't return the per-task delete shape `{"ok": True}` only
+    assert body.get("removed") is not None
