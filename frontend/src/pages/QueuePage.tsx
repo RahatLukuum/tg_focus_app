@@ -3,8 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause, Folder } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Send, Paperclip, Mic, ExternalLink, X, Folder } from 'lucide-react';
 import { toast } from 'sonner';
+import { MediaRenderer } from '@/components/media/MediaRenderer';
+import { Lightbox, type LightboxItem } from '@/components/media/Lightbox';
+import { AttachMenu } from '@/components/media/AttachMenu';
 
 const formatDuration = (s: number) => {
   const m = Math.floor(s / 60);
@@ -12,87 +15,6 @@ const formatDuration = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 };
 
-const VoiceMessage = ({ url, duration }: { url: string; duration?: number }) => {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.preload = 'metadata';
-
-    const updateProgress = () => {
-      setCurrentTime(audio.currentTime);
-      setProgress((audio.currentTime / (audio.duration || 1)) * 100);
-    };
-
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setProgress(0);
-      setCurrentTime(0);
-    };
-
-    audio.addEventListener('timeupdate', updateProgress);
-    audio.addEventListener('ended', handleEnded);
-
-    return () => {
-      audio.removeEventListener('timeupdate', updateProgress);
-      audio.removeEventListener('ended', handleEnded);
-      audio.pause();
-    };
-  }, [url]);
-
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
-    } else {
-      audioRef.current.play();
-    }
-    setIsPlaying(!isPlaying);
-  };
-
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current) return;
-    const bounds = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - bounds.left;
-    const percentage = x / bounds.width;
-    const newTime = percentage * (audioRef.current.duration || 0);
-    audioRef.current.currentTime = newTime;
-    setProgress(percentage * 100);
-  };
-
-  return (
-    <div className="flex items-center gap-3 mb-1 min-w-[200px]">
-      <Button
-        type="button"
-        variant="secondary"
-        size="icon"
-        className="h-10 w-10 rounded-full shrink-0"
-        onClick={togglePlay}
-      >
-        {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-1" />}
-      </Button>
-      <div className="flex-1 flex flex-col gap-1">
-        <div 
-          className="h-1.5 w-full bg-primary/20 rounded-full cursor-pointer relative"
-          onClick={handleSeek}
-        >
-          <div 
-            className="absolute top-0 left-0 h-full bg-primary rounded-full transition-all duration-75"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
-        <div className="flex items-center justify-between text-[10px] opacity-70">
-          <span>{formatDuration(currentTime)}</span>
-          <span>{duration != null ? formatDuration(duration) : ''}</span>
-        </div>
-      </div>
-    </div>
-  );
-};
 import { Input } from '@/components/ui/input';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
@@ -148,6 +70,7 @@ const QueuePage = () => {
   const historyRef = useRef<HTMLDivElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const shouldSendRecordingRef = useRef(true);
@@ -305,26 +228,7 @@ const QueuePage = () => {
     }));
   }, [state.messages, currentChatId, isGroupChat]);
 
-  const [fullscreenMedia, setFullscreenMedia] = useState<{url: string, type: MediaType} | null>(null);
-
-  const renderMedia = (msg: UiMsg) => {
-    if (!msg.mediaType || !msg.mediaUrl) return null;
-    switch (msg.mediaType) {
-      case 'photo':
-        return <img src={msg.mediaUrl} alt="" className="max-w-full max-h-64 rounded-md mb-1 cursor-pointer object-cover" loading="lazy" onClick={() => setFullscreenMedia({url: msg.mediaUrl!, type: 'photo'})} />;
-      case 'video':
-        return <video src={`${msg.mediaUrl}#t=0.001`} controls playsInline className="max-w-full max-h-64 rounded-md mb-1 bg-black/10 cursor-pointer" preload="metadata" onClick={(e) => { e.preventDefault(); setFullscreenMedia({url: msg.mediaUrl!, type: 'video'}); }} />;
-      case 'voice':
-        return <VoiceMessage url={msg.mediaUrl} duration={msg.duration} />;
-      default:
-        return (
-          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 bg-background/50 rounded-md border border-border hover:bg-background/80 transition-colors mb-1 max-w-full">
-            <Paperclip className="h-4 w-4 shrink-0" />
-            <span className="text-sm truncate">{msg.fileName || 'Скачать файл'}</span>
-          </a>
-        );
-    }
-  };
+  const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
 
   const currentDialog = currentChatId ? {
     id: currentChatId,
@@ -463,6 +367,11 @@ const QueuePage = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: MediaType) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error('Файл больше 50 MB не отправляется');
+      e.target.value = '';
+      return;
+    }
     openPreview(file, type);
     e.target.value = '';
   };
@@ -626,7 +535,17 @@ const QueuePage = () => {
                         {message.senderName && (
                           <p className="text-xs font-semibold text-blue-500 mb-0.5">{message.senderName}</p>
                         )}
-                        {renderMedia(message)}
+                        {message.mediaType && message.mediaUrl && (
+                          <MediaRenderer
+                            mediaType={message.mediaType}
+                            mediaUrl={message.mediaUrl}
+                            fileName={message.fileName}
+                            fileSize={(message as any).fileSize}
+                            mimeType={(message as any).mimeType}
+                            duration={message.duration}
+                            onLightbox={(item) => setLightboxItem(item)}
+                          />
+                        )}
                         <p>{message.text}</p>
                         <p className={`text-xs mt-1 ${
                           message.isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'
@@ -646,7 +565,7 @@ const QueuePage = () => {
                 const queueMeta = state.queueMeta?.[currentChatId];
                 const topicTitle = queueMeta?.topic_title ?? null;
                 return (
-                  <div className="bg-muted p-4 rounded-lg space-y-1">
+                  <div className="bg-muted p-4 rounded-lg space-y-2">
                     {topicTitle && (
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
                         # {topicTitle}
@@ -655,7 +574,19 @@ const QueuePage = () => {
                     {isGroupChat && lastMsg && !lastMsg.isOutgoing && lastMsg.senderName && (
                       <p className="text-xs font-semibold text-blue-500">{lastMsg.senderName}</p>
                     )}
-                    <p className="text-sm whitespace-pre-wrap break-words">{lastMsg?.text || currentDialog.lastMessage}</p>
+                    {lastMsg?.mediaType && lastMsg.mediaUrl && (
+                      <MediaRenderer
+                        mediaType={lastMsg.mediaType}
+                        mediaUrl={lastMsg.mediaUrl}
+                        fileName={lastMsg.fileName}
+                        fileSize={(lastMsg as any).fileSize}
+                        mimeType={(lastMsg as any).mimeType}
+                        duration={lastMsg.duration}
+                        onLightbox={(item) => setLightboxItem(item)}
+                      />
+                    )}
+                    {lastMsg?.text && <p className="text-sm whitespace-pre-wrap break-words">{lastMsg.text}</p>}
+                    {!lastMsg?.text && !lastMsg?.mediaType && <p className="text-sm whitespace-pre-wrap break-words">{currentDialog.lastMessage}</p>}
                     <p className="text-xs text-muted-foreground">
                       {lastMsg ? new Date(lastMsg.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : currentDialog.time}
                     </p>
@@ -693,20 +624,29 @@ const QueuePage = () => {
           <div className="bg-background rounded-xl shadow-2xl max-w-md w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-sm">
-                {previewType === 'photo' ? 'Отправить фото' : 'Отправить видео'}
+                {previewType === 'photo' ? 'Отправить фото' : previewType === 'video' ? 'Отправить видео' : 'Отправить файл'}
               </h3>
               <Button variant="ghost" size="icon" onClick={closePreview}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <div className="flex justify-center max-h-64 overflow-hidden rounded-lg bg-muted">
-              {previewType === 'photo' && previewUrl && (
-                <img src={previewUrl} alt="Preview" className="max-h-64 object-contain" />
-              )}
-              {previewType === 'video' && previewUrl && (
-                <video src={previewUrl} controls className="max-h-64 object-contain" />
-              )}
-            </div>
+            {(previewType === 'photo' || previewType === 'video') ? (
+              <div className="flex justify-center max-h-64 overflow-hidden rounded-lg bg-muted">
+                {previewType === 'photo' && previewUrl && (
+                  <img src={previewUrl} alt="Preview" className="max-h-64 object-contain" />
+                )}
+                {previewType === 'video' && previewUrl && (
+                  <video src={previewUrl} controls className="max-h-64 object-contain" />
+                )}
+              </div>
+            ) : (
+              <div className="p-3 rounded-md bg-muted text-sm break-words">
+                <p className="font-medium">{previewFile.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {(previewFile.size / 1024 / 1024).toFixed(2)} MB
+                </p>
+              </div>
+            )}
             <Input
               value={previewCaption}
               onChange={e => setPreviewCaption(e.target.value)}
@@ -729,17 +669,13 @@ const QueuePage = () => {
       <div className="border-t border-border p-4 relative">
         <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileChange(e, 'photo')} />
         <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileChange(e, 'video')} />
+        <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileChange(e, 'document')} />
         {showAttach && (
-          <div className="absolute bottom-full mb-2 left-4 z-30 bg-popover border border-border rounded-lg shadow-lg p-2 flex gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={() => imageInputRef.current?.click()}>
-              <Image className="h-4 w-4 mr-1" />
-              Фото
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => videoInputRef.current?.click()}>
-              <Video className="h-4 w-4 mr-1" />
-              Видео
-            </Button>
-          </div>
+          <AttachMenu
+            onPickPhoto={() => imageInputRef.current?.click()}
+            onPickVideo={() => videoInputRef.current?.click()}
+            onPickFile={() => fileInputRef.current?.click()}
+          />
         )}
         {isRecording ? (
           <div className="flex items-center gap-2 max-w-2xl mx-auto rounded-full border border-border bg-muted/40 px-3 py-2">
@@ -795,30 +731,7 @@ const QueuePage = () => {
         onTaskCreated={handleTaskCreated}
       />
 
-      {/* Fullscreen Media Viewer */}
-      {fullscreenMedia && (
-        <div 
-          className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4 cursor-pointer"
-          onClick={() => setFullscreenMedia(null)}
-        >
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="absolute top-4 right-4 text-white hover:bg-white/20"
-            onClick={(e) => { e.stopPropagation(); setFullscreenMedia(null); }}
-          >
-            <X className="h-6 w-6" />
-          </Button>
-          <div className="max-w-full max-h-full flex items-center justify-center" onClick={e => e.stopPropagation()}>
-            {fullscreenMedia.type === 'photo' && (
-              <img src={fullscreenMedia.url} alt="Fullscreen" className="max-w-full max-h-[90vh] object-contain" />
-            )}
-            {fullscreenMedia.type === 'video' && (
-              <video src={`${fullscreenMedia.url}#t=0.001`} controls autoPlay playsInline className="max-w-full max-h-[90vh] object-contain" />
-            )}
-          </div>
-        </div>
-      )}
+      <Lightbox item={lightboxItem} onClose={() => setLightboxItem(null)} />
     </div>
   );
 };
