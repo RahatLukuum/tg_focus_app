@@ -134,14 +134,16 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         ct = "application/octet-stream"
         if msg.photo:
             ct = "image/jpeg"
-        elif msg.video or msg.video_note:
+        elif msg.video:
+            ct = "video/mp4"
+        elif msg.video_note:
             ct = "video/mp4"
         elif msg.voice:
             ct = "audio/ogg"
+        elif getattr(msg, "audio", None):
+            ct = getattr(msg.audio, "mime_type", None) or "audio/mpeg"
         elif msg.document:
-            mime = getattr(msg.document, "mime_type", None)
-            if mime:
-                ct = mime
+            ct = getattr(msg.document, "mime_type", None) or "application/octet-stream"
         return StreamingResponse(buf, media_type=ct)
 
     @router.post("/send_media")
