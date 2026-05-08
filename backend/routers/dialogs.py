@@ -103,8 +103,39 @@ async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str
         dialogs.append(item)
         if item.get("folder_id") == 1:
             archived_ids.add(int(item["chat_id"]))
-    queue_ids = _build_queue_from_dialogs(dialogs_raw)
 
+    # Saved Messages fallback: ensure self-chat is always discoverable.
+    try:
+        me = await client.get_me()
+        me_id = int(getattr(me, "id", 0) or 0)
+    except Exception:
+        logger.debug("get_me() failed in dialogs build", exc_info=True)
+        me_id = 0
+    if me_id and not any(d["chat_id"] == me_id for d in dialogs):
+        try:
+            saved = await client.get_chat(me_id)
+            dialogs.append({
+                "chat_id": me_id,
+                "title": getattr(saved, "title", None) or "Saved Messages",
+                "type": "private",
+                "username": getattr(saved, "username", None),
+                "unread_count": 0,
+                "last_message_text": None,
+                "folder_id": 0,
+                "is_forum": False,
+                "is_saved_messages": True,
+            })
+        except Exception:
+            logger.debug("Saved Messages fallback fetch failed", exc_info=True)
+    else:
+        # Mark the existing self-chat row.
+        for d in dialogs:
+            if d["chat_id"] == me_id:
+                d["is_saved_messages"] = True
+                if not d.get("title"):
+                    d["title"] = "Saved Messages"
+
+    queue_ids = _build_queue_from_dialogs(dialogs_raw)
     return {"dialogs": dialogs, "queue": queue_ids, "archived_ids": archived_ids}
 
 

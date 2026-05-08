@@ -39,6 +39,14 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         account: str = "",
     ):
         client = await auth.get_authorized_client(account)
+        me_id: Optional[int] = None
+        try:
+            me = getattr(client, "me", None) or await client.get_me()
+            me_id = int(getattr(me, "id", 0) or 0)
+        except Exception:
+            logger.debug("get_me failed in /messages", exc_info=True)
+        is_self_chat = me_id is not None and int(chat_id) == me_id
+
         history: list[dict[str, Any]] = []
         kwargs: dict[str, Any] = {"limit": limit}
         if before_id:
@@ -51,7 +59,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         async for m in client.get_chat_history(chat_id, **kwargs):
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
-            if not text_content and not media_info:
+            if not text_content and not media_info and not is_self_chat:
                 continue
             sender_name = _format_sender(m) if not m.outgoing else None
             entry: dict[str, Any] = {
