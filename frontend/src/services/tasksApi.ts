@@ -20,6 +20,16 @@ const BASE_URL: string = (() => {
 
 const url = (path: string): string => `${BASE_URL}${path}`;
 
+const ACTIVE_ACCOUNT_KEY = "tg_active_account";
+
+function getActiveAccount(): string {
+  try {
+    return localStorage.getItem(ACTIVE_ACCOUNT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 async function asJson<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
@@ -30,7 +40,8 @@ async function asJson<T>(resp: Response): Promise<T> {
 
 export const tasksApi = {
   async list(account = ''): Promise<Task[]> {
-    const params = account ? `?account=${encodeURIComponent(account)}` : '';
+    const acct = account || getActiveAccount();
+    const params = acct ? `?account=${encodeURIComponent(acct)}` : '';
     const data = await asJson<{ tasks: Task[] }>(
       await fetch(url(`/tasks${params}`))
     );
@@ -43,11 +54,13 @@ export const tasksApi = {
     chat_title?: string;
     account?: string;
   }): Promise<Task> {
+    const account = input.account ?? getActiveAccount();
+    const body = { ...input, account };
     const data = await asJson<{ task: Task }>(
       await fetch(url('/tasks'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        body: JSON.stringify(body),
       })
     );
     return data.task;
@@ -74,7 +87,8 @@ export const tasksApi = {
   },
 
   async clearCompleted(account = ''): Promise<number> {
-    const params = account ? `?account=${encodeURIComponent(account)}` : '';
+    const acct = account || getActiveAccount();
+    const params = acct ? `?account=${encodeURIComponent(acct)}` : '';
     const data = await asJson<{ ok: boolean; removed: number }>(
       await fetch(url(`/tasks/completed${params}`), { method: 'DELETE' })
     );
