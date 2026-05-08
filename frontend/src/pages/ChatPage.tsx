@@ -5,25 +5,14 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ArrowLeft, Send, Paperclip, Mic, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { MediaRenderer } from '@/components/media/MediaRenderer';
 import { Lightbox, type LightboxItem } from '@/components/media/Lightbox';
 import { AttachMenu } from '@/components/media/AttachMenu';
+import { MessageBubble, type BubbleMessage } from '@/components/chat/MessageBubble';
+import { useInfiniteScrollUp } from '@/components/chat/useInfiniteScrollUp';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
-import { getCached, setCached, appendCached } from "@/services/messageCache";
+import { getCached, setCached, appendCached, prependCached } from "@/services/messageCache";
 import { MediaType } from '@/types/telegram';
-
-type UiMsg = {
-  id: number;
-  text: string;
-  isOutgoing: boolean;
-  time: string;
-  senderName?: string;
-  mediaType?: MediaType;
-  mediaUrl?: string;
-  fileName?: string;
-  duration?: number;
-};
 
 const formatDuration = (s: number) => {
   const m = Math.floor(s / 60);
@@ -55,7 +44,7 @@ const ChatPage = () => {
   const topicIdRaw = searchParams.get('topic_id');
   const topicId = topicIdRaw ? parseInt(topicIdRaw, 10) : undefined;
   const [message, setMessage] = useState('');
-  const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, dispatch } = useTelegram();
+  const { state, sendMessage, sendMedia, dispatch } = useTelegram();
   const listRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const prevMsgCountRef = useRef(0);
@@ -108,7 +97,7 @@ const ChatPage = () => {
   }, [dispatch, topicId]);
 
   useEffect(() => {
-    if (!state.isInitialized) return;
+    if (!numericChatId) return;
     let cancelled = false;
 
     initialScrollDoneRef.current = false;
@@ -182,37 +171,47 @@ const ChatPage = () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numericChatId, shouldPreloadFull, state.isInitialized]);
-
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      if (el.scrollTop < 50) {
-        loadOlderMessages(numericChatId).catch(() => {});
-      }
-    };
-    el.addEventListener('scroll', onScroll);
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [numericChatId, loadOlderMessages]);
+  }, [numericChatId, shouldPreloadFull]);
 
   const isGroup = contact?.type === 'group' || contact?.type === 'supergroup';
 
-  const messages = useMemo<UiMsg[]>(() => {
+  const messages = useMemo<BubbleMessage[]>(() => {
     const list = state.messages[numericChatId] || [];
-    const filtered = topicId === undefined ? list : list.filter(m => m.topicId === topicId);
-    return filtered.map(m => ({
+    const filtered = topicId === undefined ? list : list.filter((m) => m.topicId === topicId);
+    return filtered.map((m) => ({
       id: m.id,
       text: m.text,
       isOutgoing: m.isOutgoing,
       time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-      senderName: isGroup && !m.isOutgoing ? m.senderName : undefined,
+      senderName: m.senderName,
       mediaType: m.mediaType,
       mediaUrl: m.mediaUrl,
       fileName: m.fileName,
+      fileSize: (m as any).fileSize,
+      mimeType: (m as any).mimeType,
       duration: m.duration,
     }));
-  }, [state.messages, numericChatId, isGroup, topicId]);
+  }, [state.messages, numericChatId, topicId]);
+
+  const onLoadOlder = useCallback(async () => {
+    const list = state.messages[numericChatId];
+    const firstId = list && list.length > 0 ? list[0].id : undefined;
+    if (!firstId) return { added: 0 };
+    const older = await telegramApi.getOlderMessages(numericChatId, firstId, 100, topicId);
+    if (older.length === 0) return { added: 0 };
+    dispatch({
+      type: 'PREPEND_MESSAGES',
+      payload: { chatId: numericChatId, messages: older },
+    });
+    await prependCached(numericChatId, older);
+    return { added: older.length };
+  }, [numericChatId, state.messages, topicId, dispatch]);
+
+  const { sentinelRef } = useInfiniteScrollUp({
+    containerRef: listRef,
+    onLoadMore: onLoadOlder,
+    enabled: !!numericChatId && messages.length > 0,
+  });
 
   useEffect(() => {
     const el = listRef.current;
@@ -353,14 +352,6 @@ const ChatPage = () => {
 
   const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
 
-  if (!state.isInitialized) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Восстановление сессии...</p>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -377,41 +368,15 @@ const ChatPage = () => {
       </div>
 
       {/* Messages */}
-      <div ref={listRef} className="flex-1 overflow-y-auto p-4 pb-24 space-y-4">
+      <div ref={listRef} className="flex-1 overflow-y-auto p-4 pb-24 space-y-3">
+        <div ref={sentinelRef} />
         {messages.map((msg) => (
-          <div
+          <MessageBubble
             key={msg.id}
-            className={`flex ${msg.isOutgoing ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
-                msg.isOutgoing
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              }`}
-            >
-              {msg.senderName && (
-                <p className="text-xs font-semibold text-blue-500 mb-0.5">{msg.senderName}</p>
-              )}
-              {msg.mediaType && msg.mediaUrl && (
-                <MediaRenderer
-                  mediaType={msg.mediaType}
-                  mediaUrl={msg.mediaUrl}
-                  fileName={msg.fileName}
-                  fileSize={(msg as any).fileSize}
-                  mimeType={(msg as any).mimeType}
-                  duration={msg.duration}
-                  onLightbox={(item) => setLightboxItem(item)}
-                />
-              )}
-              {msg.text && <p className="text-sm">{msg.text}</p>}
-              <p className={`text-xs mt-1 ${
-                msg.isOutgoing ? 'text-primary-foreground/70' : 'text-muted-foreground'
-              }`}>
-                {msg.time}
-              </p>
-            </div>
-          </div>
+            message={msg}
+            showSenderName={isGroup && !msg.isOutgoing}
+            onLightbox={(item) => setLightboxItem(item)}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
