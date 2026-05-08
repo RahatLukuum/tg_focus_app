@@ -34,11 +34,20 @@ def make_router(
             logger.warning("FolderService.get_folders failed", exc_info=True)
             payload = {"chat_to_folders": {}}
         c2f = payload.get("chat_to_folders", {})
+        snoozed = await queue_service.snoozed(account)
         return {
             "queue": [
-                {"chat_id": cid, "folder_ids": list(c2f.get(cid, []))}
+                {
+                    "chat_id": cid,
+                    "folder_ids": list(c2f.get(cid, [])),
+                    "snooze_until": None,
+                }
                 for cid in order
-            ]
+            ],
+            "snoozed": [
+                {"chat_id": cid, "snooze_until": ts}
+                for cid, ts in sorted(snoozed.items(), key=lambda kv: kv[1])
+            ],
         }
 
     @router.post("/queue/action")

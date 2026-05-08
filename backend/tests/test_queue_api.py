@@ -56,9 +56,10 @@ async def test_queue_meta_true_returns_objects_with_folder_ids(app_factory):
     assert r.status_code == 200
     assert r.json() == {
         "queue": [
-            {"chat_id": 1, "folder_ids": [2, 3]},
-            {"chat_id": 2, "folder_ids": []},
-        ]
+            {"chat_id": 1, "folder_ids": [2, 3], "snooze_until": None},
+            {"chat_id": 2, "folder_ids": [], "snooze_until": None},
+        ],
+        "snoozed": [],
     }
 
 
