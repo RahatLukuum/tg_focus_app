@@ -121,11 +121,15 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         suffix = Path(file.filename or "file").suffix
         if not suffix:
             suffix = ".ogg" if media_type == "voice" else ".bin"
+        CHUNK_SIZE = 1 << 20  # 1 MiB
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path: Optional[str] = None
         try:
-            content = await file.read()
-            tmp.write(content)
+            while True:
+                chunk = await file.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                tmp.write(chunk)
             tmp.flush()
             tmp_path = tmp.name
             tmp.close()
