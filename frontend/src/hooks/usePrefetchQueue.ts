@@ -12,6 +12,8 @@ const PREFETCH_LIMIT = 50;
 export function usePrefetchQueue(queueIds: number[], currentIndex: number) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const targetKey = `${queueIds[currentIndex + 1] ?? ""}|${queueIds[currentIndex + 2] ?? ""}`;
+
   useEffect(() => {
     if (queueIds.length === 0) return;
     const targets = [queueIds[currentIndex + 1], queueIds[currentIndex + 2]]
@@ -27,14 +29,13 @@ export function usePrefetchQueue(queueIds: number[], currentIndex: number) {
       for (const chatId of targets) {
         try {
           const cached = await getCached(chatId);
-          // Skip if cache is fresh (< 60s).
           if (cached && Date.now() - cached.lastSyncAt < 60_000) continue;
           const messages = await telegramApi.getMessages(chatId, PREFETCH_LIMIT);
           if (messages.length > 0) {
             await setCached(chatId, messages);
           }
         } catch {
-          // silent — prefetch is best-effort
+          /* silent */
         }
       }
     }, DEBOUNCE_MS);
@@ -45,5 +46,6 @@ export function usePrefetchQueue(queueIds: number[], currentIndex: number) {
         timer.current = null;
       }
     };
-  }, [queueIds, currentIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKey]);
 }
