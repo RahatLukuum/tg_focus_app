@@ -9,7 +9,7 @@ import { telegramApi } from '@/services/telegramApi';
 import { ContactsFilter, type FilterState } from '@/components/message/ContactsFilter';
 import { useFolders } from '@/hooks/useFolders';
 
-interface ListItem { id: number; name: string; lastMessage?: string; type: string }
+interface ListItem { id: number; name: string; lastMessage?: string; type: string; isForum?: boolean }
 
 const MessagePage = () => {
   const navigate = useNavigate();
@@ -43,19 +43,19 @@ const MessagePage = () => {
       items.push(
         ...state.chats
           .filter((c) => c.type === "private")
-          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type })),
+          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
       );
     }
     if (includeType("groups")) {
       items.push(
         ...state.chats
           .filter((c) => c.type === "group" || c.type === "supergroup")
-          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type })),
+          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
       );
     }
     if (includeType("contacts")) {
       items.push(
-        ...(state.contacts || []).map((c) => ({ id: c.id, name: c.title, type: "private" as const })),
+        ...(state.contacts || []).map((c) => ({ id: c.id, name: c.title, type: "private" as const, isForum: false })),
       );
     }
     return items;
@@ -73,6 +73,14 @@ const MessagePage = () => {
       item.name.toLowerCase().includes(searchQuery.toLowerCase()),
     );
   }, [allItems, filter.folderIds, chatToFolders, searchQuery]);
+
+  const handleItemClick = (item: ListItem) => {
+    if (item.isForum) {
+      navigate(`/chat/${item.id}/topics`);
+    } else {
+      navigate(`/chat/${item.id}`);
+    }
+  };
 
   const resolveAndNavigate = async (value: string) => {
     try {
@@ -155,7 +163,7 @@ const MessagePage = () => {
             {filtered.map((item) => (
               <button
                 key={item.id}
-                onClick={() => navigate(`/chat/${item.id}`)}
+                onClick={() => handleItemClick(item)}
                 className="w-full p-4 flex items-center gap-3 hover:bg-muted transition-colors text-left"
               >
                 <Avatar className="h-10 w-10">
