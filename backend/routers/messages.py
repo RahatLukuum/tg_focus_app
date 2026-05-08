@@ -64,6 +64,35 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         history.reverse()
         return {"chat_id": chat_id, "messages": history}
 
+    @router.get("/messages/since")
+    async def get_messages_since(
+        chat_id: int,
+        since_id: int,
+        limit: int = 50,
+        account: str = "",
+    ):
+        client = await auth.get_authorized_client(account)
+        history: list[dict[str, Any]] = []
+        kwargs: dict[str, Any] = {"limit": limit, "min_id": int(since_id)}
+        async for m in client.get_chat_history(chat_id, **kwargs):
+            text_content = (m.text or m.caption or "").strip()
+            media_info = extract_media_info(m, chat_id=chat_id)
+            if not text_content and not media_info:
+                continue
+            sender_name = _format_sender(m) if not m.outgoing else None
+            entry: dict[str, Any] = {
+                "id": m.id,
+                "text": text_content,
+                "date": int(m.date.timestamp()) if m.date else None,
+                "from_user_id": m.from_user.id if m.from_user else None,
+                "from_user_name": sender_name,
+                "outgoing": m.outgoing,
+            }
+            entry.update(media_info)
+            history.append(entry)
+        history.sort(key=lambda e: e["id"])  # chronological
+        return {"chat_id": chat_id, "messages": history[:limit]}
+
     @router.get("/media/{chat_id}/{message_id}")
     async def get_media(chat_id: int, message_id: int, account: str = ""):
         client = await auth.get_authorized_client(account)
