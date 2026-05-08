@@ -243,7 +243,7 @@ class TelegramApiService {
   ): Promise<Message[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson(
-      `/messages?chat_id=${encodeURIComponent(chatId)}&limit=${encodeURIComponent(limit)}&since_id=${encodeURIComponent(sinceId)}`,
+      `/messages/since?chat_id=${encodeURIComponent(chatId)}&since_id=${encodeURIComponent(sinceId)}&limit=${encodeURIComponent(limit)}`,
     );
     return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
   }
