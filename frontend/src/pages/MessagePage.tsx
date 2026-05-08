@@ -3,20 +3,21 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Search, MessageSquare, Users, BookUser } from 'lucide-react';
+import { ArrowLeft, Search } from 'lucide-react';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
+import { ContactsFilter, type FilterState } from '@/components/message/ContactsFilter';
+import { useFolders } from '@/hooks/useFolders';
 
 interface ListItem { id: number; name: string; lastMessage?: string; type: string }
-
-type Tab = 'private' | 'groups' | 'contacts';
 
 const MessagePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
-  const [tab, setTab] = useState<Tab>('private');
+  const [filter, setFilter] = useState<FilterState>({ types: [], folderIds: [] });
   const { state, loadChats } = useTelegram();
+  const { chatToFolders } = useFolders();
 
   const isIdPhoneOrUsername = useMemo(() => {
     const q = searchQuery.trim();
@@ -35,40 +36,43 @@ const MessagePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
-  const privateChats: ListItem[] = useMemo(() =>
-    state.chats.filter(c => c.type === 'private').map(c => ({
-      id: c.id,
-      name: c.title,
-      lastMessage: c.lastMessage?.text,
-      type: c.type,
-    })),
-    [state.chats]
-  );
+  const allItems: ListItem[] = useMemo(() => {
+    const items: ListItem[] = [];
+    const includeType = (t: string) => filter.types.length === 0 || filter.types.includes(t);
+    if (includeType("private")) {
+      items.push(
+        ...state.chats
+          .filter((c) => c.type === "private")
+          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type })),
+      );
+    }
+    if (includeType("groups")) {
+      items.push(
+        ...state.chats
+          .filter((c) => c.type === "group" || c.type === "supergroup")
+          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type })),
+      );
+    }
+    if (includeType("contacts")) {
+      items.push(
+        ...(state.contacts || []).map((c) => ({ id: c.id, name: c.title, type: "private" as const })),
+      );
+    }
+    return items;
+  }, [state.chats, state.contacts, filter.types]);
 
-  const groupChats: ListItem[] = useMemo(() =>
-    state.chats.filter(c => c.type === 'group' || c.type === 'supergroup').map(c => ({
-      id: c.id,
-      name: c.title,
-      lastMessage: c.lastMessage?.text,
-      type: c.type,
-    })),
-    [state.chats]
-  );
-
-  const contactsList: ListItem[] = useMemo(() =>
-    (state.contacts || []).map(c => ({
-      id: c.id,
-      name: c.title,
-      type: 'private',
-    })),
-    [state.contacts]
-  );
-
-  const currentList = tab === 'private' ? privateChats : tab === 'groups' ? groupChats : contactsList;
-
-  const filtered = currentList.filter(item =>
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    let list = allItems;
+    if (filter.folderIds.length > 0) {
+      list = list.filter((item) => {
+        const folders = chatToFolders.get(item.id) ?? [];
+        return folders.some((id) => filter.folderIds.includes(id));
+      });
+    }
+    return list.filter((item) =>
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()),
+    );
+  }, [allItems, filter.folderIds, chatToFolders, searchQuery]);
 
   const resolveAndNavigate = async (value: string) => {
     try {
@@ -128,46 +132,22 @@ const MessagePage = () => {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-border">
-        <button
-          onClick={() => setTab('private')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-            tab === 'private' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <MessageSquare className="h-4 w-4" />
-          Личные
-          <span className="text-xs opacity-60">({privateChats.length})</span>
-        </button>
-        <button
-          onClick={() => setTab('groups')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-            tab === 'groups' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Users className="h-4 w-4" />
-          Группы
-          <span className="text-xs opacity-60">({groupChats.length})</span>
-        </button>
-        <button
-          onClick={() => setTab('contacts')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
-            tab === 'contacts' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <BookUser className="h-4 w-4" />
-          Контакты
-          <span className="text-xs opacity-60">({contactsList.length})</span>
-        </button>
-      </div>
+      {/* Chip filters */}
+      <ContactsFilter
+        typeCounts={{
+          private: state.chats.filter((c) => c.type === "private").length,
+          groups: state.chats.filter((c) => c.type === "group" || c.type === "supergroup").length,
+          contacts: (state.contacts || []).length,
+        }}
+        onChange={setFilter}
+      />
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="flex items-center justify-center h-48">
             <p className="text-muted-foreground">
-              {searchQuery ? 'Ничего не найдено' : tab === 'private' ? 'Нет личных чатов' : tab === 'groups' ? 'Нет групп' : 'Нет контактов'}
+              {searchQuery ? 'Ничего не найдено' : 'Нет чатов'}
             </p>
           </div>
         ) : (
