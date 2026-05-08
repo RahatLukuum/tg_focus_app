@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const HOUR = 3600;
 const DAY = 86400;
@@ -41,7 +42,10 @@ export function SnoozePopup({ open, onClose, onSnooze }: Props) {
     const ms = new Date(custom).getTime();
     if (!Number.isFinite(ms)) return;
     const ts = Math.floor(ms / 1000);
-    if (ts <= Math.floor(Date.now() / 1000)) return;
+    if (ts <= Math.floor(Date.now() / 1000)) {
+      toast.error("Время должно быть в будущем");
+      return;
+    }
     onSnooze(ts);
     onClose();
   };
