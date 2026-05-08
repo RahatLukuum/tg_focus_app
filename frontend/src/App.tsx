@@ -10,6 +10,7 @@ import QueuePage from "./pages/QueuePage";
 import MessagePage from "./pages/MessagePage";
 import ChatPage from "./pages/ChatPage";
 import TodoPage from "./pages/TodoPage";
+import TopicsPage from "@/pages/TopicsPage";
 
 const queryClient = new QueryClient();
 
@@ -42,6 +43,7 @@ const App = () => (
               <Route path="/home" element={<HomePage />} />
               <Route path="/queue" element={<QueuePage />} />
               <Route path="/message" element={<MessagePage />} />
+              <Route path="/chat/:chatId/topics" element={<TopicsPage />} />
               <Route path="/chat/:chatId" element={<ChatPage />} />
               <Route path="/todo" element={<TodoPage />} />
             </Routes>
@@ -53,6 +55,7 @@ const App = () => (
               <Route path="/home" element={<HomePage />} />
               <Route path="/queue" element={<QueuePage />} />
               <Route path="/message" element={<MessagePage />} />
+              <Route path="/chat/:chatId/topics" element={<TopicsPage />} />
               <Route path="/chat/:chatId" element={<ChatPage />} />
               <Route path="/todo" element={<TodoPage />} />
             </Routes>
