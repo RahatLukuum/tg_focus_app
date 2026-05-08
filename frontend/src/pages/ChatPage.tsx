@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -129,6 +129,9 @@ const ChatPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { chatId } = useParams();
+  const [searchParams] = useSearchParams();
+  const topicIdRaw = searchParams.get('topic_id');
+  const topicId = topicIdRaw ? parseInt(topicIdRaw, 10) : undefined;
   const [message, setMessage] = useState('');
   const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, dispatch } = useTelegram();
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -167,19 +170,19 @@ const ChatPage = () => {
   const preloadFullChatHistory = useCallback(async (targetChatId: number) => {
     const pageSize = 100;
     const maxPages = 30;
-    const firstBatch = await telegramApi.getMessages(targetChatId, pageSize);
+    const firstBatch = await telegramApi.getMessages(targetChatId, pageSize, topicId);
     let allMessages = [...firstBatch];
     let beforeId = firstBatch[0]?.id;
     let pagesLoaded = 0;
     while (beforeId && pagesLoaded < maxPages) {
-      const older = await telegramApi.getOlderMessages(targetChatId, beforeId, pageSize);
+      const older = await telegramApi.getOlderMessages(targetChatId, beforeId, pageSize, topicId);
       if (!older.length) break;
       allMessages = [...older, ...allMessages];
       beforeId = older[0]?.id;
       pagesLoaded += 1;
     }
     dispatch({ type: 'SET_MESSAGES', payload: { chatId: targetChatId, messages: allMessages } });
-  }, [dispatch]);
+  }, [dispatch, topicId]);
 
   useEffect(() => {
     if (!state.isInitialized) return;
@@ -205,7 +208,7 @@ const ChatPage = () => {
       // 2. Fetch delta if we had a cache; otherwise full fetch.
       if (lastKnownId > 0) {
         try {
-          const newer = await telegramApi.getMessagesSince(numericChatId, lastKnownId);
+          const newer = await telegramApi.getMessagesSince(numericChatId, lastKnownId, 50, topicId);
           if (cancelled || newer.length === 0) return;
           dispatch({
             type: "SET_MESSAGES",
@@ -222,7 +225,7 @@ const ChatPage = () => {
       } else {
         // No cache — fetch directly so we have a non-stale reference for caching.
         try {
-          const fresh = await telegramApi.getMessages(numericChatId);
+          const fresh = await telegramApi.getMessages(numericChatId, 100, topicId);
           if (cancelled) return;
           dispatch({
             type: "SET_MESSAGES",
@@ -274,7 +277,8 @@ const ChatPage = () => {
 
   const messages = useMemo<UiMsg[]>(() => {
     const list = state.messages[numericChatId] || [];
-    return list.map(m => ({
+    const filtered = topicId === undefined ? list : list.filter(m => m.topicId === topicId);
+    return filtered.map(m => ({
       id: m.id,
       text: m.text,
       isOutgoing: m.isOutgoing,
@@ -284,7 +288,7 @@ const ChatPage = () => {
       mediaUrl: m.mediaUrl,
       duration: m.duration,
     }));
-  }, [state.messages, numericChatId, isGroup]);
+  }, [state.messages, numericChatId, isGroup, topicId]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -305,7 +309,7 @@ const ChatPage = () => {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim() || !numericChatId) return;
-    await sendMessage(numericChatId, message.trim());
+    await sendMessage(numericChatId, message.trim(), topicId);
     setMessage('');
   };
 
