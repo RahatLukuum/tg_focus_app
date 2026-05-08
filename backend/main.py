@@ -150,6 +150,29 @@ def create_app() -> FastAPI:
     except Exception:
         logger.warning("Failed to mount /app static dir", exc_info=True)
 
+    # SPA fallback: any GET that didn't match an API route or static mount
+    # falls back to the SPA index.html. Defense-in-depth for cases where the
+    # backend is hit directly without nginx in front.
+    _API_PATH_PREFIXES = (
+        "auth/", "ws", "media/", "queue", "tasks", "folders",
+        "dialogs", "messages", "send_message", "send_media",
+        "bootstrap", "contacts", "chat_info", "me",
+        "generate_reply", "resolve_contact", "healthz", "docs",
+        "openapi.json", "redoc", "app/",
+    )
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        from fastapi import HTTPException
+        from fastapi.responses import FileResponse
+
+        if not full_path or full_path.startswith(_API_PATH_PREFIXES):
+            raise HTTPException(status_code=404)
+        index = Path(__file__).parent / "frontend" / "dist" / "index.html"
+        if not index.exists():
+            raise HTTPException(status_code=404)
+        return FileResponse(str(index))
+
     return app
 
 
