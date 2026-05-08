@@ -21,6 +21,16 @@ export interface Chat {
   unreadCount?: number;
   lastMessage?: Message;
   isOnline?: boolean;
+  isForum?: boolean;
+}
+
+export interface Topic {
+  topicId: number;
+  title: string;
+  iconColor?: number;
+  iconEmojiId?: string | null;
+  unreadCount: number;
+  lastMessageText: string | null;
 }
 
 export type MediaType = 'photo' | 'video' | 'voice' | 'document';
@@ -39,6 +49,7 @@ export interface Message {
   mediaUrl?: string;
   fileName?: string;
   duration?: number;
+  topicId?: number;
 }
 
 export interface AuthState {
