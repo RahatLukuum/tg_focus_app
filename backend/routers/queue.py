@@ -43,12 +43,16 @@ def make_router(
 
     @router.post("/queue/action")
     async def queue_action(payload: dict[str, Any]):
+        import time
+
         chat_id = payload.get("chat_id")
         action = str(payload.get("action", "")).lower()
-        if chat_id is None or action not in {"done", "postpone", "task"}:
+        valid = {"done", "postpone", "task", "snooze", "skip"}
+        if chat_id is None or action not in valid:
             raise HTTPException(status_code=400, detail="chat_id and valid action are required")
 
         account = str(payload.get("account", "")).strip()
+
         if action == "done":
             try:
                 client = manager.get_or_create(account) if account else manager.default
@@ -57,7 +61,19 @@ def make_router(
             except Exception:
                 logger.warning("read_chat_history failed", exc_info=True)
             await queue_service.remove(account, chat_id)
+        elif action == "snooze":
+            until_raw = payload.get("snooze_until")
+            if until_raw is None:
+                raise HTTPException(status_code=400, detail="snooze_until is required")
+            try:
+                until_ts = int(until_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="snooze_until must be int")
+            if until_ts <= int(time.time()):
+                raise HTTPException(status_code=400, detail="snooze_until must be in the future")
+            await queue_service.snooze(account, chat_id, until_ts=until_ts)
         else:
+            # postpone / task / skip — all move to end without changing unread
             await queue_service.move_to_end(account, chat_id)
 
         order = await queue_service.get(account)
