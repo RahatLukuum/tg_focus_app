@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
+from services.folder_service import FolderService
 from services.queue_service import QueueService
 
 logger = logging.getLogger(__name__)
@@ -17,12 +18,28 @@ def make_router(
     manager: PyrogramClientManager,
     auth: AuthDeps,
     queue_service: QueueService,
+    folder_service: FolderService,
 ) -> APIRouter:
     router = APIRouter()
 
     @router.get("/queue")
-    async def get_queue(account: str = ""):
-        return {"queue": await queue_service.get(account)}
+    async def get_queue(account: str = "", meta: bool = False):
+        order = await queue_service.get(account)
+        if not meta:
+            return {"queue": order}
+
+        try:
+            payload = await folder_service.get_folders(account=account)
+        except Exception:
+            logger.warning("FolderService.get_folders failed", exc_info=True)
+            payload = {"chat_to_folders": {}}
+        c2f = payload.get("chat_to_folders", {})
+        return {
+            "queue": [
+                {"chat_id": cid, "folder_ids": list(c2f.get(cid, []))}
+                for cid in order
+            ]
+        }
 
     @router.post("/queue/action")
     async def queue_action(payload: dict[str, Any]):
@@ -38,7 +55,7 @@ def make_router(
                 await manager.ensure_connected(client)
                 await client.read_chat_history(chat_id)
             except Exception:
-                logger.warning("read_chat_history(%s) failed, continuing with queue removal", chat_id, exc_info=True)
+                logger.warning("read_chat_history failed", exc_info=True)
             await queue_service.remove(account, chat_id)
         else:
             await queue_service.move_to_end(account, chat_id)
