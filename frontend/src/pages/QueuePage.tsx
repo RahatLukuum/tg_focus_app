@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Check, Clock, Plus, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause, Folder } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Send, Paperclip, Mic, Image, Video, ExternalLink, X, Play, Pause, Folder } from 'lucide-react';
 import { toast } from 'sonner';
 
 const formatDuration = (s: number) => {
@@ -99,6 +99,7 @@ import { telegramApi } from '@/services/telegramApi';
 import { useFolders } from '@/hooks/useFolders';
 import { usePrefetchQueue } from '@/hooks/usePrefetchQueue';
 import { QueueFolderFilter } from '@/components/queue/QueueFolderFilter';
+import { QueueActionsBar } from '@/components/queue/QueueActionsBar';
 import { getCached, setCached } from '@/services/messageCache';
 import { MediaType } from '@/types/telegram';
 
@@ -336,6 +337,46 @@ const QueuePage = () => {
       setCurrentIndex(i => Math.min(i, Math.max(0, (newQueue.length - 1))));
       dispatch({ type: 'QUEUE_DIRTY' });
     } catch {}
+  };
+
+  const handleDone = async () => {
+    if (!currentChatId) return;
+    try {
+      await telegramApi.queueAction(currentChatId, 'done');
+      setQueueIds((prev) => prev.filter((id) => id !== currentChatId));
+      dispatch({ type: 'QUEUE_DIRTY' });
+    } catch (e) {
+      console.warn('done failed', e);
+    }
+  };
+
+  const handleSnooze = async (untilTs: number) => {
+    if (!currentChatId) return;
+    try {
+      await telegramApi.queueAction(currentChatId, 'snooze', { snooze_until: untilTs });
+      setQueueIds((prev) => prev.filter((id) => id !== currentChatId));
+      dispatch({ type: 'QUEUE_DIRTY' });
+    } catch (e) {
+      console.warn('snooze failed', e);
+    }
+  };
+
+  const handleSkip = async () => {
+    if (!currentChatId) return;
+    try {
+      const newQueue = await telegramApi.queueAction(currentChatId, 'skip');
+      setQueueIds(newQueue);
+      setCurrentIndex((i) => Math.min(i, Math.max(0, newQueue.length - 1)));
+      dispatch({ type: 'QUEUE_DIRTY' });
+    } catch (e) {
+      console.warn('skip failed', e);
+    }
+  };
+
+  const handleTaskCreated = async (alsoRemove: boolean) => {
+    if (alsoRemove) {
+      await handleDone();
+    }
   };
 
   const handleViewHistory = () => {
@@ -719,33 +760,14 @@ const QueuePage = () => {
       </div>
 
       {/* Action Buttons */}
-      <div className="border-t border-border p-4">
-        <div className="flex gap-3 max-w-2xl mx-auto">
-          <Button 
-            className="flex-1 h-12"
-            onClick={() => handleAction('done')}
-          >
-            <Check className="w-4 h-4 mr-2" />
-            Выполнено
-          </Button>
-          <Button 
-            variant="outline" 
-            className="flex-1 h-12"
-            onClick={() => handleAction('delay')}
-          >
-            <Clock className="w-4 h-4 mr-2" />
-            Отложить
-          </Button>
-          <Button 
-            variant="secondary" 
-            className="flex-1 h-12"
-            onClick={() => handleAction('task')}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            В задачи
-          </Button>
-        </div>
-      </div>
+      <QueueActionsBar
+        chatId={currentChatId ?? 0}
+        chatTitle={currentDialog?.name ?? ""}
+        onDone={handleDone}
+        onSnooze={handleSnooze}
+        onSkip={handleSkip}
+        onTaskCreated={handleTaskCreated}
+      />
 
       {/* Fullscreen Media Viewer */}
       {fullscreenMedia && (

@@ -351,10 +351,17 @@ class TelegramApiService {
     return Array.isArray(res.queue) ? res.queue : [];
   }
 
-  async queueAction(chatId: number, action: 'done' | 'postpone' | 'task'): Promise<number[]> {
-    const res = await this.fetchJson('/queue/action', {
+  async queueAction(
+    chatId: number,
+    action: 'done' | 'postpone' | 'task' | 'snooze' | 'skip',
+    extra: { snooze_until?: number } = {},
+  ): Promise<number[]> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const path = this.withAccountQuery('/queue/action');
+    const body: any = { chat_id: chatId, action, ...extra };
+    const res = await this.fetchJson(path, {
       method: 'POST',
-      body: JSON.stringify({ chat_id: chatId, action })
+      body: JSON.stringify(body),
     });
     return Array.isArray(res.queue) ? res.queue : [];
   }
