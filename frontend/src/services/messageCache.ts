@@ -49,6 +49,8 @@ export async function setCached(chatId: number, messages: Message[]): Promise<vo
 
 /**
  * Append new messages (deduped by id) to the cached list and update timestamps.
+ * No-op when there is no existing entry — avoids creating phantom cache entries
+ * from WS-only data (which would cause history holes when the user opens the chat).
  */
 export async function appendCached(
   chatId: number,
@@ -57,11 +59,13 @@ export async function appendCached(
   if (newMessages.length === 0) return;
   try {
     const existing = (await get<Entry>(keyFor(chatId), STORE)) ?? null;
-    const seen = new Set((existing?.messages ?? []).map((m) => m.id));
+    if (existing === null) return;  // don't create phantom entry from WS-only data
+    const seen = new Set(existing.messages.map((m) => m.id));
     const merged = [
-      ...(existing?.messages ?? []),
+      ...existing.messages,
       ...newMessages.filter((m) => !seen.has(m.id)),
     ];
+    merged.sort((a, b) => a.id - b.id);
     const trimmed = merged.slice(-MAX_MSGS_PER_CHAT);
     await set(
       keyFor(chatId),
