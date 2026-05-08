@@ -1,6 +1,7 @@
 """Queue endpoints: list and act on pending chats."""
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from services.queue_service import QueueService
+
+logger = logging.getLogger(__name__)
 
 
 def make_router(
@@ -35,7 +38,7 @@ def make_router(
                 await manager.ensure_connected(client)
                 await client.read_chat_history(chat_id)
             except Exception:
-                pass
+                logger.warning("read_chat_history(%s) failed, continuing with queue removal", chat_id, exc_info=True)
             await queue_service.remove(account, chat_id)
         else:
             await queue_service.move_to_end(account, chat_id)

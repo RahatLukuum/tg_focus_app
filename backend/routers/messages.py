@@ -44,7 +44,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
             try:
                 kwargs["max_id"] = int(before_id) - 1
             except Exception:
-                pass
+                logger.debug("invalid before_id value %r, ignoring", before_id, exc_info=True)
         async for m in client.get_chat_history(chat_id, **kwargs):
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
