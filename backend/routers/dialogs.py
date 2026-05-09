@@ -24,6 +24,13 @@ except Exception:
     ImportContacts = None  # type: ignore
     InputPhoneContact = None  # type: ignore
 
+try:
+    from pyrogram.raw.functions.messages import GetDialogs as RawGetDialogs  # type: ignore
+    from pyrogram.raw.types import InputPeerEmpty  # type: ignore
+except Exception:
+    RawGetDialogs = None  # type: ignore
+    InputPeerEmpty = None  # type: ignore
+
 
 def _map_dialog(d: Any) -> Optional[dict[str, Any]]:
     chat = getattr(d, "chat", None)
@@ -89,10 +96,52 @@ def _build_queue_from_dialogs(dialogs: Iterable[Any]) -> list[int]:
     return queue
 
 
+async def _fetch_archived_chat_ids(client: Client, limit: int = 200) -> set[int]:
+    """Return the set of chat_ids in folder_id=1 (Archive).
+
+    Pyrogram's high-level ``get_dialogs`` only walks the main folder, so
+    archived chats are invisible to it. We use raw ``messages.GetDialogs``
+    with ``folder_id=1`` and translate raw peers into the same chat_id
+    convention the rest of the codebase uses.
+    """
+    if RawGetDialogs is None or InputPeerEmpty is None:
+        return set()
+    archived_chat_ids: set[int] = set()
+    try:
+        result = await client.invoke(
+            RawGetDialogs(
+                offset_date=0,
+                offset_id=0,
+                offset_peer=InputPeerEmpty(),
+                limit=limit,
+                hash=0,
+                folder_id=1,
+            )
+        )
+    except Exception:
+        logger.debug("raw archived GetDialogs failed", exc_info=True)
+        return archived_chat_ids
+    for d in getattr(result, "dialogs", []) or []:
+        peer = getattr(d, "peer", None)
+        if peer is None:
+            continue
+        if hasattr(peer, "channel_id"):
+            archived_chat_ids.add(int(f"-100{int(peer.channel_id)}"))
+        elif hasattr(peer, "chat_id"):
+            archived_chat_ids.add(-int(peer.chat_id))
+        elif hasattr(peer, "user_id"):
+            archived_chat_ids.add(int(peer.user_id))
+    return archived_chat_ids
+
+
 async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str, Any]:
     dialogs_raw: list[Any] = []
     async for d in client.get_dialogs(limit=limit):
         dialogs_raw.append(d)
+
+    # Fetch archived chats in parallel — Pyrogram's high-level get_dialogs
+    # only walks the main folder, so archives are otherwise invisible.
+    archived_task = asyncio.create_task(_fetch_archived_chat_ids(client, limit=max(limit, 200)))
 
     dialogs: list[dict[str, Any]] = []
     archived_ids: set[int] = set()
@@ -103,6 +152,11 @@ async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str
         dialogs.append(item)
         if item.get("folder_id") == 1:
             archived_ids.add(int(item["chat_id"]))
+
+    # Merge raw archived ids (catches archives that Pyrogram's main-folder
+    # get_dialogs() never returned).
+    archived_from_raw = await archived_task
+    archived_ids |= archived_from_raw
 
     # Saved Messages fallback: ensure self-chat is always discoverable.
     try:
@@ -248,11 +302,24 @@ def make_router(
             dialogs_task = asyncio.create_task(_build_dialogs_and_queue(client, limit=limit))
             contacts_task = asyncio.create_task(_get_contacts_payload(account))
             dialogs_payload, contacts_payload = await asyncio.gather(dialogs_task, contacts_task)
+            archived_ids = dialogs_payload["archived_ids"]
             # Tell FolderService which chats are archived (handler uses this).
-            folder_service.set_archived(account, dialogs_payload["archived_ids"])
+            folder_service.set_archived(account, archived_ids)
             await _attach_folder_ids(dialogs_payload["dialogs"], account)
             queue_ids = dialogs_payload["queue"]
             await queue_service.replace(account, queue_ids)
+
+            # Prune any persisted queue entries that turned out to be archived.
+            # _build_queue_from_dialogs already excludes folder_id==1 entries
+            # we saw, but raw GetDialogs(folder_id=1) catches archives that
+            # never showed up in the main folder dump.
+            try:
+                order = await queue_service.get(account)
+                for cid in [c for c in order if int(c) in archived_ids]:
+                    await queue_service.remove(account, cid)
+            except Exception:
+                logger.debug("queue prune against archived_ids failed", exc_info=True)
+
             return {
                 "dialogs": dialogs_payload["dialogs"],
                 "contacts": contacts_payload,
