@@ -25,13 +25,18 @@ export default function TopicsPage() {
         ]);
         if (cancelled) return;
         if (info) setChatTitle(info.title);
+        if (t.length === 0) {
+          // Not actually a forum (or empty) — bounce to plain chat view.
+          navigate(`/chat/${chatId}`, { replace: true });
+          return;
+        }
         setTopics(t);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Ошибка загрузки тем");
       }
     })();
     return () => { cancelled = true; };
-  }, [chatId]);
+  }, [chatId, navigate]);
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
