@@ -107,6 +107,11 @@ rm -rf "${WEBROOT:?}"/*
 cp -r dist/* "$WEBROOT/"
 chown -R www-data:www-data "$WEBROOT"
 
+if [[ -f "$PROJECT/ops/nginx/tg-focus.conf" ]]; then
+    info "Обновляю nginx конфиг..."
+    cp "$PROJECT/ops/nginx/tg-focus.conf" /etc/nginx/sites-enabled/tg-focus
+fi
+
 nginx -t 2>&1 && systemctl reload nginx
 info "Nginx перезагружен"
 

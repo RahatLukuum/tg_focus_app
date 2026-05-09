@@ -129,6 +129,113 @@ def _last_message_snapshot(top: Any) -> Optional[dict[str, Any]]:
     }
 
 
+async def _fetch_archived_dialogs(client: Client, limit: int = 200) -> list[dict[str, Any]]:
+    """Return archived (folder_id=1) dialogs as a list of mapped dicts.
+
+    Mirrors the shape of ``_map_dialog`` (chat_id, title, type, username,
+    unread_count, last_message_text, folder_id, is_forum) and adds an
+    ``is_archived: True`` flag. Channels (broadcast) are skipped, matching
+    ``_map_dialog`` policy.
+    """
+    if RawGetDialogs is None or InputPeerEmpty is None:
+        return []
+    try:
+        result = await client.invoke(
+            RawGetDialogs(
+                offset_date=0,
+                offset_id=0,
+                offset_peer=InputPeerEmpty(),
+                limit=limit,
+                hash=0,
+                folder_id=1,
+            )
+        )
+    except Exception:
+        logger.debug("archived dialogs raw fetch failed", exc_info=True)
+        return []
+
+    chats_by_id = {int(getattr(c, "id", 0)): c for c in (getattr(result, "chats", []) or [])}
+    users_by_id = {int(getattr(u, "id", 0)): u for u in (getattr(result, "users", []) or [])}
+
+    messages_by_peer: dict[int, Any] = {}
+    for msg in (getattr(result, "messages", []) or []):
+        peer = getattr(msg, "peer_id", None)
+        if peer is None:
+            continue
+        if hasattr(peer, "channel_id"):
+            messages_by_peer[int(f"-100{int(peer.channel_id)}")] = msg
+        elif hasattr(peer, "chat_id"):
+            messages_by_peer[-int(peer.chat_id)] = msg
+        elif hasattr(peer, "user_id"):
+            messages_by_peer[int(peer.user_id)] = msg
+
+    out: list[dict[str, Any]] = []
+    for d in (getattr(result, "dialogs", []) or []):
+        peer = getattr(d, "peer", None)
+        if peer is None:
+            continue
+        cid: Optional[int] = None
+        title = ""
+        ctype = ""
+        username: Optional[str] = None
+        is_forum = False
+        if hasattr(peer, "channel_id"):
+            cid = int(f"-100{int(peer.channel_id)}")
+            ch = chats_by_id.get(int(peer.channel_id))
+            if ch is None:
+                continue
+            title = getattr(ch, "title", "") or ""
+            if getattr(ch, "megagroup", False):
+                ctype = "supergroup"
+            elif getattr(ch, "broadcast", False):
+                ctype = "channel"
+            else:
+                ctype = "supergroup"
+            username = getattr(ch, "username", None)
+            is_forum = bool(getattr(ch, "forum", False))
+        elif hasattr(peer, "chat_id"):
+            cid = -int(peer.chat_id)
+            gr = chats_by_id.get(int(peer.chat_id))
+            if gr is None:
+                continue
+            title = getattr(gr, "title", "") or ""
+            ctype = "group"
+        elif hasattr(peer, "user_id"):
+            cid = int(peer.user_id)
+            u = users_by_id.get(int(peer.user_id))
+            if u is None:
+                continue
+            first = getattr(u, "first_name", "") or ""
+            last = getattr(u, "last_name", "") or ""
+            title = (first + (" " + last if last else "")).strip() or str(cid)
+            ctype = "private"
+            username = getattr(u, "username", None)
+
+        if cid is None or ctype == "channel" or ctype == "":
+            continue
+
+        last_msg = messages_by_peer.get(cid)
+        last_text: Optional[str] = None
+        if last_msg is not None:
+            text = (getattr(last_msg, "message", None) or "").strip()
+            last_text = text or None
+
+        out.append(
+            {
+                "chat_id": cid,
+                "title": title or str(cid),
+                "type": ctype,
+                "username": username,
+                "unread_count": int(getattr(d, "unread_count", 0) or 0),
+                "last_message_text": last_text,
+                "folder_id": 1,
+                "is_forum": is_forum,
+                "is_archived": True,
+            }
+        )
+    return out
+
+
 async def _fetch_archived_chat_ids(client: Client, limit: int = 200) -> set[int]:
     """Return the set of chat_ids in folder_id=1 (Archive).
 
@@ -378,6 +485,13 @@ def make_router(
         payload = await _build_dialogs_and_queue(client, limit=limit)
         await _attach_folder_ids(payload["dialogs"], account)
         return {"dialogs": payload["dialogs"]}
+
+    @router.get("/archived_dialogs")
+    async def get_archived_dialogs(account: str = ""):
+        client = await auth.get_authorized_client(account)
+        items = await _fetch_archived_dialogs(client)
+        await _attach_folder_ids(items, account)
+        return {"dialogs": items}
 
     @router.get("/bootstrap")
     async def get_bootstrap(limit: int = 100, account: str = ""):
