@@ -19,7 +19,8 @@ const MessagePage = () => {
   const [filter, setFilter] = useState<FilterState>({ types: [], folderIds: [], archive: false });
   const [archivedChats, setArchivedChats] = useState<Chat[]>([]);
   const [archivedLoaded, setArchivedLoaded] = useState(false);
-  const { state, loadChats } = useTelegram();
+  const [fullChatsLoaded, setFullChatsLoaded] = useState(false);
+  const { state, loadChats, dispatch } = useTelegram();
   const { chatToFolders } = useFolders();
 
   const isIdPhoneOrUsername = useMemo(() => {
@@ -38,6 +39,28 @@ const MessagePage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  // Background fetch the FULL dialog history (limit=0 = no cap) once per
+  // mount, so the user sees every chat ever, not just the bootstrap's first
+  // 100. Bootstrap stays cheap; this fills in the rest within ~1-3s.
+  useEffect(() => {
+    if (fullChatsLoaded || !state.auth.isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const all = await telegramApi.getChats(0);
+        if (!cancelled && all.length > 0) {
+          dispatch({ type: 'SET_CHATS', payload: all });
+        }
+      } catch {
+        // best-effort; keep bootstrap subset visible on error
+      } finally {
+        if (!cancelled) setFullChatsLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.auth.isAuthenticated]);
 
   // Lazy-load archived dialogs the first time the user toggles the Архив chip.
   useEffect(() => {

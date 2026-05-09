@@ -180,9 +180,11 @@ class TelegramApiService {
     return this.currentUser;
   }
 
-  async getChats(): Promise<Chat[]> {
+  async getChats(limit?: number): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
-    const res = await this.fetchJson('/dialogs');
+    // limit=0 → Pyrogram returns ALL dialogs (no cap). Omit query for default.
+    const path = limit !== undefined ? `/dialogs?limit=${limit}` : '/dialogs';
+    const res = await this.fetchJson(path);
     return (res.dialogs || []).map((d: any) => this.mapDialogToChat(d));
   }
 
