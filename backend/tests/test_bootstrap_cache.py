@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from routers.dialogs import make_router
+from services.queue_meta_cache import QueueMetaCache
 from services.queue_service import QueueService
 
 
@@ -55,7 +56,8 @@ def _build_app(auth, folder_svc):
     manager.get_or_create = MagicMock(return_value=auth.client)
     manager.ensure_connected = AsyncMock()
     qs = QueueService()
-    app.include_router(make_router(manager, auth, qs, folder_svc))
+    qmc = QueueMetaCache(ttl_seconds=30)
+    app.include_router(make_router(manager, auth, qs, folder_svc, qmc))
     return app
 
 

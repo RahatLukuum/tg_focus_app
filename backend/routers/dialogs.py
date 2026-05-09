@@ -12,6 +12,7 @@ from pyrogram import Client
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from services.folder_service import FolderService
+from services.queue_meta_cache import QueueMetaCache
 from services.queue_service import QueueService
 from services.response_cache import TtlCache
 
@@ -96,6 +97,38 @@ def _build_queue_from_dialogs(dialogs: Iterable[Any]) -> list[int]:
     return queue
 
 
+def _last_message_snapshot(top: Any) -> Optional[dict[str, Any]]:
+    """Build the per-chat last-message dict used by queue meta cache.
+
+    Mirrors routers.queue._fetch_last_message's shape so prewarmed entries
+    are interchangeable with on-demand fetched ones. Returns None if the
+    top message has no usable id/date.
+    """
+    if top is None:
+        return None
+    text = (getattr(top, "text", None) or getattr(top, "caption", None) or "").strip() or None
+    from_user = getattr(top, "from_user", None)
+    from_name: Optional[str] = None
+    if from_user is not None:
+        first = getattr(from_user, "first_name", None) or ""
+        last = getattr(from_user, "last_name", None) or ""
+        from_name = (first + (" " + last if last else "")).strip() or None
+    sender_chat = getattr(top, "sender_chat", None)
+    if not from_name and sender_chat is not None:
+        from_name = getattr(sender_chat, "title", None)
+    outgoing = bool(getattr(top, "outgoing", False))
+    topic_id = getattr(top, "message_thread_id", None)
+    date_attr = getattr(top, "date", None)
+    return {
+        "id": getattr(top, "id", 0),
+        "text": text,
+        "from_name": from_name if not outgoing else None,
+        "outgoing": outgoing,
+        "date": int(date_attr.timestamp()) if date_attr is not None else None,
+        "topic_id": int(topic_id) if topic_id else None,
+    }
+
+
 async def _fetch_archived_chat_ids(client: Client, limit: int = 200) -> set[int]:
     """Return the set of chat_ids in folder_id=1 (Archive).
 
@@ -134,17 +167,56 @@ async def _fetch_archived_chat_ids(client: Client, limit: int = 200) -> set[int]
     return archived_chat_ids
 
 
+async def _fetch_forum_chat_ids(client: Client, limit: int = 200) -> set[int]:
+    """Return the set of supergroup chat_ids that have the forum flag set.
+
+    Pyrogram's high-level Chat object has no ``is_forum`` attribute, so we
+    do one extra raw ``messages.GetDialogs`` call (main folder) purely to
+    harvest the ``Channel.forum`` flag from raw chats.
+    """
+    if RawGetDialogs is None or InputPeerEmpty is None:
+        return set()
+    forum_chat_ids: set[int] = set()
+    try:
+        result = await client.invoke(
+            RawGetDialogs(
+                offset_date=0,
+                offset_id=0,
+                offset_peer=InputPeerEmpty(),
+                limit=limit,
+                hash=0,
+                folder_id=0,
+            )
+        )
+    except Exception:
+        logger.debug("raw main GetDialogs (for forum flag) failed", exc_info=True)
+        return forum_chat_ids
+    for ch in getattr(result, "chats", []) or []:
+        if not getattr(ch, "forum", False):
+            continue
+        ch_id = getattr(ch, "id", None)
+        if ch_id is None:
+            continue
+        try:
+            forum_chat_ids.add(int(f"-100{int(ch_id)}"))
+        except (TypeError, ValueError):
+            continue
+    return forum_chat_ids
+
+
 async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str, Any]:
     dialogs_raw: list[Any] = []
     async for d in client.get_dialogs(limit=limit):
         dialogs_raw.append(d)
 
-    # Fetch archived chats in parallel — Pyrogram's high-level get_dialogs
-    # only walks the main folder, so archives are otherwise invisible.
+    # Run the two raw harvest calls in parallel with the rest of the work
+    # below — neither depends on the parsed dialogs above.
     archived_task = asyncio.create_task(_fetch_archived_chat_ids(client, limit=max(limit, 200)))
+    forum_task = asyncio.create_task(_fetch_forum_chat_ids(client, limit=max(limit, 200)))
 
     dialogs: list[dict[str, Any]] = []
     archived_ids: set[int] = set()
+    last_messages: dict[int, dict[str, Any]] = {}
     for d in dialogs_raw:
         item = _map_dialog(d)
         if not item:
@@ -152,11 +224,19 @@ async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str
         dialogs.append(item)
         if item.get("folder_id") == 1:
             archived_ids.add(int(item["chat_id"]))
+        snap = _last_message_snapshot(getattr(d, "top_message", None))
+        if snap is not None:
+            last_messages[int(item["chat_id"])] = snap
 
     # Merge raw archived ids (catches archives that Pyrogram's main-folder
     # get_dialogs() never returned).
     archived_from_raw = await archived_task
     archived_ids |= archived_from_raw
+
+    # Apply the forum flag from raw Channel data.
+    forum_chat_ids = await forum_task
+    for item in dialogs:
+        item["is_forum"] = int(item["chat_id"]) in forum_chat_ids
 
     # Saved Messages fallback: ensure self-chat is always discoverable.
     try:
@@ -190,7 +270,12 @@ async def _build_dialogs_and_queue(client: Client, limit: int = 100) -> dict[str
                     d["title"] = "Saved Messages"
 
     queue_ids = _build_queue_from_dialogs(dialogs_raw)
-    return {"dialogs": dialogs, "queue": queue_ids, "archived_ids": archived_ids}
+    return {
+        "dialogs": dialogs,
+        "queue": queue_ids,
+        "archived_ids": archived_ids,
+        "last_messages": last_messages,
+    }
 
 
 def _normalize_phone_e164(phone: str) -> str:
@@ -236,6 +321,7 @@ def make_router(
     auth: AuthDeps,
     queue_service: QueueService,
     folder_service: FolderService,
+    queue_meta_cache: QueueMetaCache,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -319,6 +405,13 @@ def make_router(
                     await queue_service.remove(account, cid)
             except Exception:
                 logger.debug("queue prune against archived_ids failed", exc_info=True)
+
+            # Prewarm queue_meta_cache from top_message snapshots so the first
+            # /queue?meta=true after a bootstrap doesn't have to round-trip
+            # Telegram for every chat.
+            for cid, last in dialogs_payload["last_messages"].items():
+                if int(cid) in queue_ids:
+                    queue_meta_cache.set(account, int(cid), last)
 
             return {
                 "dialogs": dialogs_payload["dialogs"],

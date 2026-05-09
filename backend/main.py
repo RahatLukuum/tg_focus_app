@@ -137,7 +137,11 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(auth_router.make_router(manager))
-    app.include_router(dialogs_router.make_router(manager, auth_deps, queue_service, folder_service))
+    app.include_router(
+        dialogs_router.make_router(
+            manager, auth_deps, queue_service, folder_service, queue_meta_cache
+        )
+    )
     app.include_router(messages_router.make_router(manager, auth_deps))
     app.include_router(
         queue_router.make_router(
