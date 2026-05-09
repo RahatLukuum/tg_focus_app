@@ -2,6 +2,12 @@
 
 Mirrors FolderService pattern: cache results per (account, chat_id) for
 ttl_seconds. Returns plain dicts for easy JSON serialization.
+
+Pyrogram 2.0.106 does NOT expose a high-level ``client.get_forum_topics``,
+so this service drops down to the raw MTProto call
+``channels.GetForumTopics``. Errors (e.g. non-forum chat, missing
+access_hash, peer resolution failures) are caught and yield an empty list
+rather than propagating.
 """
 from __future__ import annotations
 
@@ -11,20 +17,23 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from pyrogram.raw.functions.channels import GetForumTopics  # type: ignore
+    from pyrogram.raw.types import InputChannel  # type: ignore
+except Exception:  # pragma: no cover - import-time guard
+    GetForumTopics = None  # type: ignore
+    InputChannel = None  # type: ignore
+
 
 def _serialize(topic: Any) -> dict[str, Any]:
-    """Convert Pyrogram ForumTopic to a JSON-friendly dict."""
-    last_text: Optional[str] = None
-    top = getattr(topic, "top_message", None)
-    if top is not None:
-        last_text = (getattr(top, "text", None) or getattr(top, "caption", None) or "").strip() or None
+    """Convert a raw ForumTopic to a JSON-friendly dict."""
     return {
         "topic_id": int(getattr(topic, "id", 0) or 0),
         "title": getattr(topic, "title", "") or "",
         "icon_color": getattr(topic, "icon_color", None),
         "icon_emoji_id": getattr(topic, "icon_emoji_id", None),
         "unread_count": int(getattr(topic, "unread_count", 0) or 0),
-        "last_message_text": last_text,
+        "last_message_text": None,
     }
 
 
@@ -55,11 +64,64 @@ class TopicsService:
             return self._manager.default
         return self._manager.get_or_create(account)
 
+    async def _fetch_raw_topics(self, client: Any, chat_id: int) -> list[Any]:
+        """Invoke raw ``channels.GetForumTopics`` and return the topic list.
+
+        Returns an empty list on any error (non-forum chat, missing
+        access_hash, peer resolution failure, raw API absent, etc.).
+        """
+        if GetForumTopics is None or InputChannel is None:
+            return []
+        try:
+            peer = await client.resolve_peer(chat_id)
+        except (AttributeError, ValueError, KeyError):
+            return []
+        except Exception:
+            logger.debug("resolve_peer(%s) failed", chat_id, exc_info=True)
+            return []
+
+        channel_id = getattr(peer, "channel_id", None)
+        access_hash = getattr(peer, "access_hash", None)
+        if channel_id is None or access_hash is None:
+            # Not a channel/supergroup peer — cannot be a forum.
+            return []
+
+        try:
+            input_ch = InputChannel(channel_id=channel_id, access_hash=access_hash)
+        except (AttributeError, ValueError, TypeError):
+            return []
+
+        # ``q`` is Optional[str] in 2.0.106; pass None for "no filter".
+        try:
+            result = await client.invoke(
+                GetForumTopics(
+                    channel=input_ch,
+                    offset_date=0,
+                    offset_id=0,
+                    offset_topic=0,
+                    limit=100,
+                    q=None,
+                )
+            )
+        except (AttributeError, ValueError):
+            return []
+        except Exception:
+            # Most non-forum chats return CHANNEL_FORUM_MISSING or similar.
+            logger.debug(
+                "channels.GetForumTopics failed for chat_id=%s", chat_id, exc_info=True
+            )
+            return []
+
+        topics = getattr(result, "topics", None) or []
+        # Raw response also may contain ForumTopicDeleted — filter those out
+        # by requiring an ``id`` and a ``title``.
+        return [t for t in topics if getattr(t, "id", None) is not None and getattr(t, "title", None) is not None]
+
     async def get_topics(self, account: str, chat_id: int) -> list[dict[str, Any]]:
         """Return the list of topic dicts for a forum-supergroup chat.
 
         Results are TTL-cached per ``(account, chat_id)``. On any error
-        from ``get_forum_topics``, the failure is logged and an empty list
+        from the raw API call, the failure is logged and an empty list
         is returned (and cached) instead of raising.
 
         Args:
@@ -76,14 +138,21 @@ class TopicsService:
             return cached[1]
 
         client = self._client_for(key[0])
-        await self._manager.ensure_connected(client)
+        try:
+            await self._manager.ensure_connected(client)
+        except Exception:
+            logger.debug("ensure_connected failed for account=%r", key[0], exc_info=True)
 
         try:
-            topics: list[dict[str, Any]] = []
-            async for t in client.get_forum_topics(chat_id):
-                topics.append(_serialize(t))
+            raw_topics = await self._fetch_raw_topics(client, chat_id)
+            topics = [_serialize(t) for t in raw_topics]
+        except (AttributeError, ValueError):
+            topics = []
         except Exception:
-            logger.warning("get_forum_topics failed for chat_id=%s account=%r", chat_id, key[0], exc_info=True)
+            logger.warning(
+                "topics fetch failed for chat_id=%s account=%r",
+                chat_id, key[0], exc_info=True,
+            )
             topics = []
 
         self._cache[key] = (now, topics)
