@@ -22,6 +22,7 @@ export interface Chat {
   lastMessage?: Message;
   isOnline?: boolean;
   isForum?: boolean;
+  isArchived?: boolean;
 }
 
 export interface Topic {

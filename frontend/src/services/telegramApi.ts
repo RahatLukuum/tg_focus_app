@@ -186,6 +186,12 @@ class TelegramApiService {
     return (res.dialogs || []).map((d: any) => this.mapDialogToChat(d));
   }
 
+  async getArchivedDialogs(): Promise<Chat[]> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    const res = await this.fetchJson('/archived_dialogs');
+    return (res.dialogs || []).map((d: any) => this.mapDialogToChat(d));
+  }
+
   async getContacts(): Promise<Chat[]> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const res = await this.fetchJson('/contacts');
@@ -528,6 +534,7 @@ class TelegramApiService {
       type: (d.type || 'private') as Chat['type'],
       unreadCount: d.unread_count || 0,
       isForum: !!d.is_forum,
+      isArchived: !!d.is_archived,
       lastMessage: d.last_message_text
         ? {
             id: Date.now(),

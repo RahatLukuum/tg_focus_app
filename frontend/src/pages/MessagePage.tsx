@@ -8,6 +8,7 @@ import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { ContactsFilter, type FilterState } from '@/components/message/ContactsFilter';
 import { useFolders } from '@/hooks/useFolders';
+import type { Chat } from '@/types/telegram';
 
 interface ListItem { id: number; name: string; lastMessage?: string; type: string; isForum?: boolean }
 
@@ -15,7 +16,9 @@ const MessagePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<FilterState>({ types: [], folderIds: [] });
+  const [filter, setFilter] = useState<FilterState>({ types: [], folderIds: [], archive: false });
+  const [archivedChats, setArchivedChats] = useState<Chat[]>([]);
+  const [archivedLoaded, setArchivedLoaded] = useState(false);
   const { state, loadChats } = useTelegram();
   const { chatToFolders } = useFolders();
 
@@ -36,9 +39,50 @@ const MessagePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
 
+  // Lazy-load archived dialogs the first time the user toggles the Архив chip.
+  useEffect(() => {
+    if (!filter.archive || archivedLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const items = await telegramApi.getArchivedDialogs();
+        if (!cancelled) {
+          setArchivedChats(items);
+          setArchivedLoaded(true);
+        }
+      } catch {
+        if (!cancelled) setArchivedLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [filter.archive, archivedLoaded]);
+
   const allItems: ListItem[] = useMemo(() => {
     const items: ListItem[] = [];
     const includeType = (t: string) => filter.types.length === 0 || filter.types.includes(t);
+
+    if (filter.archive) {
+      // When Архив is on, the data source becomes the archived dialogs list
+      // (instead of state.chats). Type chips still apply on top.
+      if (includeType("private")) {
+        items.push(
+          ...archivedChats
+            .filter((c) => c.type === "private")
+            .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
+        );
+      }
+      if (includeType("groups")) {
+        items.push(
+          ...archivedChats
+            .filter((c) => c.type === "group" || c.type === "supergroup")
+            .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
+        );
+      }
+      // Контакты chip is irrelevant for archive (contacts are not folder-scoped),
+      // intentionally skipped.
+      return items;
+    }
+
     if (includeType("private")) {
       items.push(
         ...state.chats
@@ -59,7 +103,7 @@ const MessagePage = () => {
       );
     }
     return items;
-  }, [state.chats, state.contacts, filter.types]);
+  }, [state.chats, state.contacts, archivedChats, filter.types, filter.archive]);
 
   const filtered = useMemo(() => {
     let list = allItems;
@@ -75,7 +119,10 @@ const MessagePage = () => {
   }, [allItems, filter.folderIds, chatToFolders, searchQuery]);
 
   const handleItemClick = (item: ListItem) => {
-    if (item.isForum) {
+    // Always route supergroups via /topics. TopicsPage will redirect to the
+    // plain chat view when no topics are returned (i.e. not actually a forum),
+    // which keeps us robust against backend is_forum detection failures.
+    if (item.type === "supergroup") {
       navigate(`/chat/${item.id}/topics`);
     } else {
       navigate(`/chat/${item.id}`);
@@ -147,6 +194,7 @@ const MessagePage = () => {
           groups: state.chats.filter((c) => c.type === "group" || c.type === "supergroup").length,
           contacts: (state.contacts || []).length,
         }}
+        archiveCount={archivedLoaded ? archivedChats.length : undefined}
         onChange={setFilter}
       />
 
