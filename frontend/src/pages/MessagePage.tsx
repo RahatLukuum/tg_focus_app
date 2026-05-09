@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Search } from 'lucide-react';
+import { ArrowLeft, Search, Bookmark } from 'lucide-react';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { ContactsFilter, type FilterState } from '@/components/message/ContactsFilter';
@@ -160,23 +160,33 @@ const MessagePage = () => {
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {filtered.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleItemClick(item)}
-                className="w-full p-4 flex items-center gap-3 hover:bg-muted transition-colors text-left"
-              >
-                <Avatar className="h-10 w-10">
-                  <AvatarFallback>{item.name?.[0] || '?'}</AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-medium truncate">{item.name}</h3>
-                  {item.lastMessage && (
-                    <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
+            {filtered.map((item) => {
+              const isSavedMessages = item.id === state.auth.user?.id;
+              const displayName = isSavedMessages ? 'Избранное' : item.name;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleItemClick(item)}
+                  className="w-full p-4 flex items-center gap-3 hover:bg-muted transition-colors text-left"
+                >
+                  {isSavedMessages ? (
+                    <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
+                      <Bookmark className="h-5 w-5 text-white" aria-hidden />
+                    </div>
+                  ) : (
+                    <Avatar className="h-10 w-10">
+                      <AvatarFallback>{item.name?.[0] || '?'}</AvatarFallback>
+                    </Avatar>
                   )}
-                </div>
-              </button>
-            ))}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-medium truncate">{displayName}</h3>
+                    {item.lastMessage && (
+                      <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
