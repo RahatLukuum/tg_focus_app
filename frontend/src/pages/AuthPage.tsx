@@ -50,7 +50,9 @@ const AuthPage = () => {
     }
   }, [state.auth.isAuthenticated, navigate]);
 
-  if (state.auth.isAuthenticated) {
+  // Hide the form until the backend has answered /me. Otherwise the auth form
+  // flashes for a moment on every cold start before the redirect to /home.
+  if (!state.isInitialized || state.auth.isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <p className="text-muted-foreground">Загрузка...</p>
