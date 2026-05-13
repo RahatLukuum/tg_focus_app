@@ -150,5 +150,53 @@ docker compose pull && docker compose up --build -d
 - Храните `.env` и файл сессии в безопасном месте (делайте бэкапы).
 - Используйте HTTPS и обратный прокси.
 
+## Desktop App (Tauri)
+
+Кросс-платформенный десктоп для **macOS** и **Windows**. Использует ту же кодовую базу что и web-фронтенд, ходит на тот же VPS-бэкенд через HTTPS (`https://185-252-215-73.nip.io`).
+
+### Сборка локально
+
+```bash
+cd frontend
+npm install
+npm run tauri:build
+```
+
+Артефакты появятся в:
+- macOS: `frontend/src-tauri/target/release/bundle/dmg/Telegram Assistant_<version>_aarch64.dmg`
+- Windows (только при сборке на Windows-машине): `bundle/msi/*.msi` и `bundle/nsis/*-setup.exe`
+
+### Сборка CI (GitHub Actions)
+
+Workflow `.github/workflows/tauri-build.yml` собирает оба варианта при push tag `v*` или вручную через "Run workflow". Артефакты доступны в Actions → Workflow run → Artifacts.
+
+```bash
+# Триггер релиза:
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### Установка артефакта (macOS)
+
+1. Открыть `.dmg`, перетащить `Telegram Assistant.app` в `Applications/`.
+2. **Первый запуск** (приложение не подписано Apple Developer ID):
+   - ПКМ на `.app` в Applications → **Open** → подтвердить "Open anyway" в диалоге.
+   - Альтернатива: `xattr -d com.apple.quarantine "/Applications/Telegram Assistant.app"` в терминале.
+3. При первом сообщении macOS попросит разрешить уведомления — разрешить.
+
+### Установка артефакта (Windows)
+
+1. Запустить `.msi` или `.exe`-installer.
+2. SmartScreen предупредит ("Windows protected your PC") — **More info** → **Run anyway** (приложение не подписано Code Signing сертификатом).
+3. Установится в `Program Files\Telegram Assistant\`, ярлык в Start Menu.
+
+### Фичи desktop-версии
+
+- Системные уведомления о входящих сообщениях (Telegram-style: title=имя чата, body=текст)
+- Иконка в системном трее (menu bar на mac, system tray на Windows)
+- Single-instance: повторный запуск фокусит уже открытое окно
+- Close-to-tray: × сворачивает в трей, для выхода — Quit из меню трея
+- Клик по уведомлению фокусит окно и открывает чат
+
 ---
 Вопросы/улучшения: добавление меток для медиа, расширенная фильтрация очереди, деплой — напишите в телеграмм @dranovp, помогу.
