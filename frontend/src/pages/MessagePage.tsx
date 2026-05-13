@@ -1,24 +1,40 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Search, Bookmark } from 'lucide-react';
+import { ArrowLeft, Search, Bookmark, MoreVertical, Archive, ArchiveRestore } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
-import { ContactsFilter, type FilterState } from '@/components/message/ContactsFilter';
+import {
+  MessageTabs,
+  getInitialTabState,
+  type TabState,
+} from '@/components/message/MessageTabs';
 import { useFolders } from '@/hooks/useFolders';
 import type { Chat } from '@/types/telegram';
 
-interface ListItem { id: number; name: string; lastMessage?: string; type: string; isForum?: boolean }
+interface ListItem {
+  id: number;
+  name: string;
+  lastMessage?: string;
+  type: string;
+  isForum?: boolean;
+  isArchived?: boolean;
+}
 
 const MessagePage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState<FilterState>({ types: [], folderIds: [], archive: false });
-  const [archivedChats, setArchivedChats] = useState<Chat[]>([]);
-  const [archivedLoaded, setArchivedLoaded] = useState(false);
+  const [tabs, setTabs] = useState<TabState>(getInitialTabState);
   const [fullChatsLoaded, setFullChatsLoaded] = useState(false);
   const { state, loadChats, dispatch } = useTelegram();
   const { chatToFolders } = useFolders();
@@ -53,99 +69,121 @@ const MessagePage = () => {
           dispatch({ type: 'SET_CHATS', payload: all });
         }
       } catch {
-        // best-effort; keep bootstrap subset visible on error
+        /* best-effort; keep bootstrap subset visible on error */
       } finally {
         if (!cancelled) setFullChatsLoaded(true);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.auth.isAuthenticated]);
 
-  // Lazy-load archived dialogs the first time the user toggles the Архив chip.
+  // Lazy-load archived dialogs the first time the user enters Archive scope.
   useEffect(() => {
-    if (!filter.archive || archivedLoaded) return;
+    if (tabs.scope.kind !== 'archive' || state.archivedLoaded) return;
     let cancelled = false;
     (async () => {
       try {
         const items = await telegramApi.getArchivedDialogs();
-        if (!cancelled) {
-          setArchivedChats(items);
-          setArchivedLoaded(true);
-        }
+        if (!cancelled) dispatch({ type: 'SET_ARCHIVED_CHATS', payload: items });
       } catch {
-        if (!cancelled) setArchivedLoaded(true);
+        if (!cancelled) dispatch({ type: 'SET_ARCHIVED_CHATS', payload: [] });
       }
     })();
-    return () => { cancelled = true; };
-  }, [filter.archive, archivedLoaded]);
+    return () => {
+      cancelled = true;
+    };
+  }, [tabs.scope.kind, state.archivedLoaded, dispatch]);
+
+  // The source list depends on scope: archive → archivedChats, else → main chats.
+  const sourceChats: Chat[] = useMemo(() => {
+    if (tabs.scope.kind === 'archive') return state.archivedChats;
+    if (tabs.scope.kind === 'folder') {
+      const fid = tabs.scope.id;
+      return state.chats.filter((c) => (chatToFolders.get(c.id) || []).includes(fid));
+    }
+    return state.chats;
+  }, [tabs.scope, state.chats, state.archivedChats, chatToFolders]);
 
   const allItems: ListItem[] = useMemo(() => {
     const items: ListItem[] = [];
-    const includeType = (t: string) => filter.types.length === 0 || filter.types.includes(t);
-
-    if (filter.archive) {
-      // When Архив is on, the data source becomes the archived dialogs list
-      // (instead of state.chats). Type chips still apply on top.
-      if (includeType("private")) {
-        items.push(
-          ...archivedChats
-            .filter((c) => c.type === "private")
-            .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
-        );
-      }
-      if (includeType("groups")) {
-        items.push(
-          ...archivedChats
-            .filter((c) => c.type === "group" || c.type === "supergroup")
-            .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
-        );
-      }
-      // Контакты chip is irrelevant for archive (contacts are not folder-scoped),
-      // intentionally skipped.
-      return items;
-    }
-
-    if (includeType("private")) {
+    if (tabs.type === 'private') {
       items.push(
-        ...state.chats
-          .filter((c) => c.type === "private")
-          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
+        ...sourceChats
+          .filter((c) => c.type === 'private')
+          .map((c) => ({
+            id: c.id,
+            name: c.title,
+            lastMessage: c.lastMessage?.text,
+            type: c.type,
+            isForum: c.isForum,
+            isArchived: tabs.scope.kind === 'archive' || !!c.isArchived,
+          })),
       );
-    }
-    if (includeType("groups")) {
+    } else if (tabs.type === 'groups') {
       items.push(
-        ...state.chats
-          .filter((c) => c.type === "group" || c.type === "supergroup")
-          .map((c) => ({ id: c.id, name: c.title, lastMessage: c.lastMessage?.text, type: c.type, isForum: c.isForum })),
+        ...sourceChats
+          .filter((c) => c.type === 'group' || c.type === 'supergroup')
+          .map((c) => ({
+            id: c.id,
+            name: c.title,
+            lastMessage: c.lastMessage?.text,
+            type: c.type,
+            isForum: c.isForum,
+            isArchived: tabs.scope.kind === 'archive' || !!c.isArchived,
+          })),
       );
-    }
-    if (includeType("contacts")) {
+    } else if (tabs.type === 'contacts' && tabs.scope.kind !== 'archive') {
+      // Contacts within a folder: keep only those in that folder. In "All" — full list.
+      let contacts = state.contacts || [];
+      if (tabs.scope.kind === 'folder') {
+        const fid = tabs.scope.id;
+        contacts = contacts.filter((c) => (chatToFolders.get(c.id) || []).includes(fid));
+      }
       items.push(
-        ...(state.contacts || []).map((c) => ({ id: c.id, name: c.title, type: "private" as const, isForum: false })),
+        ...contacts.map((c) => ({
+          id: c.id,
+          name: c.title,
+          type: 'private' as const,
+          isForum: false,
+          isArchived: false,
+        })),
       );
     }
     return items;
-  }, [state.chats, state.contacts, archivedChats, filter.types, filter.archive]);
+  }, [sourceChats, state.contacts, tabs.scope, tabs.type, chatToFolders]);
+
+  const typeCounts = useMemo(() => {
+    const c: Record<'private' | 'groups' | 'contacts', number> = {
+      private: sourceChats.filter((c) => c.type === 'private').length,
+      groups: sourceChats.filter((c) => c.type === 'group' || c.type === 'supergroup').length,
+      contacts:
+        tabs.scope.kind === 'archive'
+          ? 0
+          : tabs.scope.kind === 'folder'
+            ? (state.contacts || []).filter((c) =>
+                (chatToFolders.get(c.id) || []).includes((tabs.scope as { id: number }).id),
+              ).length
+            : (state.contacts || []).length,
+    };
+    return c;
+  }, [sourceChats, state.contacts, tabs.scope, chatToFolders]);
 
   const filtered = useMemo(() => {
-    let list = allItems;
-    if (filter.folderIds.length > 0) {
-      list = list.filter((item) => {
-        const folders = chatToFolders.get(item.id) ?? [];
-        return folders.some((id) => filter.folderIds.includes(id));
-      });
-    }
-    return list.filter((item) =>
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()),
-    );
-  }, [allItems, filter.folderIds, chatToFolders, searchQuery]);
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return allItems;
+    return allItems.filter((item) => {
+      const name = (item.name || '').toLowerCase();
+      if (name.includes(q)) return true;
+      const savedAlias = item.id === state.auth.user?.id ? 'избранное' : '';
+      return savedAlias && savedAlias.includes(q);
+    });
+  }, [allItems, searchQuery, state.auth.user?.id]);
 
   const handleItemClick = (item: ListItem) => {
-    // Always route supergroups via /topics. TopicsPage will redirect to the
-    // plain chat view when no topics are returned (i.e. not actually a forum),
-    // which keeps us robust against backend is_forum detection failures.
-    if (item.type === "supergroup") {
+    if (item.type === 'supergroup' && item.isForum) {
       navigate(`/chat/${item.id}/topics`);
     } else {
       navigate(`/chat/${item.id}`);
@@ -169,6 +207,26 @@ const MessagePage = () => {
       navigate(`/chat/${res.chatId}`);
     } catch (_) {}
   };
+
+  const handleToggleArchive = useCallback(
+    async (item: ListItem) => {
+      const target = item.isArchived ? 'unarchive' : 'archive';
+      try {
+        if (target === 'archive') {
+          await telegramApi.archiveChat(item.id);
+          dispatch({ type: 'SET_CHAT_ARCHIVED', payload: { chatId: item.id, archived: true } });
+          toast.success(`«${item.name}» в архиве`);
+        } else {
+          await telegramApi.unarchiveChat(item.id);
+          dispatch({ type: 'SET_CHAT_ARCHIVED', payload: { chatId: item.id, archived: false } });
+          toast.success(`«${item.name}» восстановлен`);
+        }
+      } catch (e: any) {
+        toast.error(e?.message || 'Не удалось изменить архив');
+      }
+    },
+    [dispatch],
+  );
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -210,16 +268,8 @@ const MessagePage = () => {
         </div>
       </div>
 
-      {/* Chip filters */}
-      <ContactsFilter
-        typeCounts={{
-          private: state.chats.filter((c) => c.type === "private").length,
-          groups: state.chats.filter((c) => c.type === "group" || c.type === "supergroup").length,
-          contacts: (state.contacts || []).length,
-        }}
-        archiveCount={archivedLoaded ? archivedChats.length : undefined}
-        onChange={setFilter}
-      />
+      {/* Tabs */}
+      <MessageTabs state={tabs} onChange={setTabs} typeCounts={typeCounts} />
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
@@ -235,27 +285,64 @@ const MessagePage = () => {
               const isSavedMessages = item.id === state.auth.user?.id;
               const displayName = isSavedMessages ? 'Избранное' : item.name;
               return (
-                <button
+                <div
                   key={item.id}
-                  onClick={() => handleItemClick(item)}
-                  className="w-full p-4 flex items-center gap-3 hover:bg-muted transition-colors text-left"
+                  className="w-full p-4 flex items-center gap-3 hover:bg-muted transition-colors"
                 >
-                  {isSavedMessages ? (
-                    <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
-                      <Bookmark className="h-5 w-5 text-white" aria-hidden />
-                    </div>
-                  ) : (
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback>{item.name?.[0] || '?'}</AvatarFallback>
-                    </Avatar>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium truncate">{displayName}</h3>
-                    {item.lastMessage && (
-                      <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
+                  <button
+                    type="button"
+                    onClick={() => handleItemClick(item)}
+                    className="flex-1 flex items-center gap-3 text-left min-w-0"
+                  >
+                    {isSavedMessages ? (
+                      <div className="h-10 w-10 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
+                        <Bookmark className="h-5 w-5 text-white" aria-hidden />
+                      </div>
+                    ) : (
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>{item.name?.[0] || '?'}</AvatarFallback>
+                      </Avatar>
                     )}
-                  </div>
-                </button>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium truncate">{displayName}</h3>
+                      {item.lastMessage && (
+                        <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
+                      )}
+                    </div>
+                  </button>
+                  {tabs.type !== 'contacts' && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label="Действия"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => handleToggleArchive(item)}
+                        >
+                          {item.isArchived ? (
+                            <>
+                              <ArchiveRestore className="h-4 w-4 mr-2" />
+                              Из архива
+                            </>
+                          ) : (
+                            <>
+                              <Archive className="h-4 w-4 mr-2" />
+                              В архив
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </div>
               );
             })}
           </div>

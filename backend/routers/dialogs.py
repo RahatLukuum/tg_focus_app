@@ -15,6 +15,7 @@ from services.folder_service import FolderService
 from services.queue_meta_cache import QueueMetaCache
 from services.queue_service import QueueService
 from services.response_cache import TtlCache
+from ws.broadcaster import broadcaster
 
 logger = logging.getLogger(__name__)
 
@@ -492,6 +493,62 @@ def make_router(
         items = await _fetch_archived_dialogs(client)
         await _attach_folder_ids(items, account)
         return {"dialogs": items}
+
+    async def _toggle_archive(
+        chat_id: int, account: str, archive: bool
+    ) -> dict[str, Any]:
+        client = await auth.get_authorized_client(account)
+        try:
+            if archive:
+                await client.archive_chats([chat_id])
+            else:
+                await client.unarchive_chats([chat_id])
+        except Exception as e:
+            logger.warning(
+                "%s_chats(%s) failed: %s",
+                "archive" if archive else "unarchive",
+                chat_id,
+                e,
+            )
+            raise HTTPException(status_code=500, detail=str(e))
+
+        # Sync FolderService archived set + invalidate caches that depend on it.
+        archived = folder_service.get_archived(account)
+        if archive:
+            archived.add(int(chat_id))
+        else:
+            archived.discard(int(chat_id))
+        folder_service.set_archived(account, archived)
+        bootstrap_cache.invalidate_all()
+        if archive:
+            # Archiving removes the chat from queue (matches /done semantics).
+            await queue_service.remove(account, int(chat_id))
+            queue_meta_cache.invalidate(account, int(chat_id))
+
+        await broadcaster.broadcast(
+            {
+                "type": "chat_archived" if archive else "chat_unarchived",
+                "chat_id": int(chat_id),
+                "account": account,
+            }
+        )
+        return {"ok": True, "chat_id": int(chat_id), "archived": archive}
+
+    @router.post("/chat/archive")
+    async def archive_chat(payload: dict[str, Any]):
+        chat_id = payload.get("chat_id")
+        if chat_id is None:
+            raise HTTPException(status_code=400, detail="chat_id is required")
+        account = str(payload.get("account", "")).strip()
+        return await _toggle_archive(int(chat_id), account, archive=True)
+
+    @router.post("/chat/unarchive")
+    async def unarchive_chat(payload: dict[str, Any]):
+        chat_id = payload.get("chat_id")
+        if chat_id is None:
+            raise HTTPException(status_code=400, detail="chat_id is required")
+        account = str(payload.get("account", "")).strip()
+        return await _toggle_archive(int(chat_id), account, archive=False)
 
     @router.get("/bootstrap")
     async def get_bootstrap(limit: int = 100, account: str = ""):

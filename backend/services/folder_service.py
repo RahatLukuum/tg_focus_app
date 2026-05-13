@@ -140,6 +140,10 @@ class FolderService:
         """
         self._archived[(account or "").strip()] = set(chat_ids)
 
+    def get_archived(self, account: str) -> set[int]:
+        """Return a copy of the archived chat-id set for an account."""
+        return set(self._archived.get((account or "").strip(), set()))
+
     def _client_for(self, account: str) -> Any:
         """Return the appropriate Pyrogram client for the given account key.
 

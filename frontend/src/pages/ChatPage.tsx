@@ -354,11 +354,21 @@ const ChatPage = () => {
 
   const [lightboxItem, setLightboxItem] = useState<LightboxItem | null>(null);
 
+  const handleBack = useCallback(() => {
+    // Honor history (Todo → Chat → back goes to Todo). If we landed here via
+    // direct URL, fall back to /message so we never get stuck.
+    if (window.history.length > 1) {
+      navigate(-1);
+    } else {
+      navigate('/message');
+    }
+  }, [navigate]);
+
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-background border-b border-border p-4 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate('/message')}>
+      <div className="shrink-0 bg-background border-b border-border p-4 flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={handleBack}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <Avatar className="h-8 w-8">
@@ -370,7 +380,7 @@ const ChatPage = () => {
       </div>
 
       {/* Messages */}
-      <div ref={listRef} className="flex-1 overflow-y-auto p-4 pb-24 space-y-3">
+      <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         <div ref={sentinelRef} />
         {messages.map((msg) => (
           <MessageBubble
@@ -431,7 +441,7 @@ const ChatPage = () => {
       )}
 
       {/* Message Input */}
-      <div className="sticky bottom-0 z-10 bg-background border-t border-border p-4 relative">
+      <div className="shrink-0 bg-background border-t border-border p-4 relative">
         <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileChange(e, 'photo')} />
         <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileChange(e, 'video')} />
         <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileChange(e, 'document')} />

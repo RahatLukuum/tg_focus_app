@@ -9,6 +9,8 @@ interface TelegramState {
   auth: AuthState;
   chats: Chat[];
   contacts: Chat[];
+  archivedChats: Chat[];
+  archivedLoaded: boolean;
   messages: Record<number, Message[]>;
   activeChat?: Chat;
   isLoading: boolean;
@@ -41,7 +43,10 @@ type TelegramAction =
   | { type: 'LOGOUT' }
   | { type: 'INCOMING'; payload: { chatId: number; at: number } }
   | { type: 'QUEUE_DIRTY' }
-  | { type: 'SET_QUEUE_META'; payload: Record<number, { topic_id: number | null; topic_title: string | null }> };
+  | { type: 'SET_QUEUE_META'; payload: Record<number, { topic_id: number | null; topic_title: string | null }> }
+  | { type: 'SET_ARCHIVED_CHATS'; payload: Chat[] }
+  | { type: 'SET_CHAT_ARCHIVED'; payload: { chatId: number; archived: boolean } }
+  | { type: 'UPSERT_CHAT_FROM_MESSAGE'; payload: { chatId: number; text: string; date: Date; isOutgoing: boolean } };
 
 const initialState: TelegramState = {
   auth: {
@@ -50,6 +55,8 @@ const initialState: TelegramState = {
   },
   chats: [],
   contacts: [],
+  archivedChats: [],
+  archivedLoaded: false,
   messages: {},
   isLoading: false,
   isInitialized: false,
@@ -112,6 +119,54 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
       return { ...state, queueRevision: state.queueRevision + 1 };
     case 'SET_QUEUE_META':
       return { ...state, queueMeta: action.payload };
+    case 'SET_ARCHIVED_CHATS':
+      return { ...state, archivedChats: action.payload, archivedLoaded: true };
+    case 'SET_CHAT_ARCHIVED': {
+      const { chatId, archived } = action.payload;
+      if (archived) {
+        const moving = state.chats.find((c) => c.id === chatId);
+        if (!moving) {
+          // Already archived elsewhere or unknown — just mark in archived list.
+          return state;
+        }
+        return {
+          ...state,
+          chats: state.chats.filter((c) => c.id !== chatId),
+          archivedChats: [{ ...moving, isArchived: true }, ...state.archivedChats.filter((c) => c.id !== chatId)],
+        };
+      }
+      const moving = state.archivedChats.find((c) => c.id === chatId);
+      if (!moving) return state;
+      return {
+        ...state,
+        archivedChats: state.archivedChats.filter((c) => c.id !== chatId),
+        chats: [{ ...moving, isArchived: false }, ...state.chats.filter((c) => c.id !== chatId)],
+      };
+    }
+    case 'UPSERT_CHAT_FROM_MESSAGE': {
+      const { chatId, text, date, isOutgoing } = action.payload;
+      const lastMessage: Message = {
+        id: Date.now(),
+        chatId,
+        senderId: 0,
+        text,
+        date,
+        isOutgoing,
+      };
+      const inMain = state.chats.findIndex((c) => c.id === chatId);
+      if (inMain >= 0) {
+        const updated = { ...state.chats[inMain], lastMessage };
+        const rest = state.chats.filter((c) => c.id !== chatId);
+        return { ...state, chats: [updated, ...rest] };
+      }
+      const inArch = state.archivedChats.findIndex((c) => c.id === chatId);
+      if (inArch >= 0) {
+        const updated = { ...state.archivedChats[inArch], lastMessage };
+        const rest = state.archivedChats.filter((c) => c.id !== chatId);
+        return { ...state, archivedChats: [updated, ...rest] };
+      }
+      return state;
+    }
     case 'SET_ACTIVE_CHAT':
       return { ...state, activeChat: action.payload };
     case 'SET_LOADING':
@@ -340,6 +395,16 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       dispatch({ type: 'QUEUE_DIRTY' });
       return;
     }
+    if ((evt?.type === 'chat_archived' || evt?.type === 'chat_unarchived') && typeof evt.chat_id === 'number') {
+      dispatch({
+        type: 'SET_CHAT_ARCHIVED',
+        payload: { chatId: evt.chat_id, archived: evt.type === 'chat_archived' },
+      });
+      if (evt.type === 'chat_archived') {
+        dispatch({ type: 'QUEUE_DIRTY' });
+      }
+      return;
+    }
     if (evt?.type === 'message' && typeof evt.chat_id === 'number' && evt.message) {
       const m = evt.message;
       const mapped: Message = {
@@ -360,10 +425,23 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (m.duration != null) mapped.duration = m.duration;
       }
       dispatch({ type: 'ADD_MESSAGE', payload: mapped });
+      // Keep the chat list fresh: bump last-message + reorder by recency.
+      dispatch({
+        type: 'UPSERT_CHAT_FROM_MESSAGE',
+        payload: {
+          chatId: mapped.chatId,
+          text: mapped.text || (mapped.mediaType ? `[${mapped.mediaType}]` : ''),
+          date: mapped.date,
+          isOutgoing: mapped.isOutgoing,
+        },
+      });
       // Persist new message to IndexedDB cache (best-effort, no await).
       void appendCached(mapped.chatId, [mapped]).catch(() => {});
       if (!mapped.isOutgoing) {
         dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });
+        // Incoming messages may have added a chat to the queue server-side
+        // (or just need a fresh count). Bump queueRevision so listeners refetch.
+        dispatch({ type: 'QUEUE_DIRTY' });
         // OS-level desktop notification (no-op on web).
         const chatTitle = evt.chat_title || mapped.senderName || "Telegram";
         const bodyText = (mapped.text || (mapped.mediaType ? `[${mapped.mediaType}]` : "[media]")).slice(0, 200);

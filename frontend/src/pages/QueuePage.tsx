@@ -295,6 +295,27 @@ const QueuePage = () => {
     }
   };
 
+  const handleArchive = async () => {
+    if (!currentChatId) return;
+    try {
+      await telegramApi.archiveChat(currentChatId);
+      dispatch({
+        type: 'SET_CHAT_ARCHIVED',
+        payload: { chatId: currentChatId, archived: true },
+      });
+      setQueueIds((prev) => {
+        const next = prev.filter((id) => id !== currentChatId);
+        setCurrentIndex((i) => Math.min(i, Math.max(0, next.length - 1)));
+        return next;
+      });
+      dispatch({ type: 'QUEUE_DIRTY' });
+      toast.success('Чат в архиве');
+    } catch (e: any) {
+      console.warn('archive failed', e);
+      toast.error(e?.message || 'Не удалось архивировать');
+    }
+  };
+
   const handleViewHistory = () => {
     const next = !showHistory;
     setShowHistory(next);
@@ -728,6 +749,7 @@ const QueuePage = () => {
         onDone={handleDone}
         onSnooze={handleSnooze}
         onSkip={handleSkip}
+        onArchive={handleArchive}
         onTaskCreated={handleTaskCreated}
       />
 

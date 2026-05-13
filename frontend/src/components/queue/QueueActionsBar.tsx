@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Check, Clock, ListTodo, SkipForward } from "lucide-react";
+import { Archive, Check, Clock, ListTodo, SkipForward } from "lucide-react";
 import { SnoozePopup } from "./SnoozePopup";
 import { TaskFromChatForm } from "./TaskFromChatForm";
 
@@ -10,6 +10,7 @@ type Props = {
   onDone: () => void;
   onSnooze: (untilTs: number) => void;
   onSkip: () => void;
+  onArchive: () => void;
   /** Called after task was created. alsoRemove=true → also call onDone(). */
   onTaskCreated: (alsoRemove: boolean) => void;
 };
@@ -20,6 +21,7 @@ export function QueueActionsBar({
   onDone,
   onSnooze,
   onSkip,
+  onArchive,
   onTaskCreated,
 }: Props) {
   const [snoozeOpen, setSnoozeOpen] = useState(false);
@@ -27,7 +29,7 @@ export function QueueActionsBar({
 
   return (
     <>
-      <div className="grid grid-cols-4 gap-2 p-3 border-t border-border">
+      <div className="grid grid-cols-5 gap-2 p-3 border-t border-border">
         <Button variant="default" onClick={onDone}>
           <Check className="h-4 w-4 mr-1" />
           Готово
@@ -39,6 +41,10 @@ export function QueueActionsBar({
         <Button variant="outline" onClick={() => setTaskOpen(true)}>
           <ListTodo className="h-4 w-4 mr-1" />
           В задачи
+        </Button>
+        <Button variant="outline" onClick={onArchive}>
+          <Archive className="h-4 w-4 mr-1" />
+          В архив
         </Button>
         <Button variant="ghost" onClick={onSkip}>
           <SkipForward className="h-4 w-4 mr-1" />

@@ -18,13 +18,14 @@ export default function TopicsPage() {
     if (!chatId) return;
     let cancelled = false;
     (async () => {
+      // Resolve title in parallel — non-blocking.
+      telegramApi.getChatInfo(chatId).then((info) => {
+        if (!cancelled && info) setChatTitle(info.title);
+      }).catch(() => {});
+
       try {
-        const [info, t] = await Promise.all([
-          telegramApi.getChatInfo(chatId).catch(() => null),
-          telegramApi.getTopics(chatId),
-        ]);
+        const t = await telegramApi.getTopics(chatId);
         if (cancelled) return;
-        if (info) setChatTitle(info.title);
         if (t.length === 0) {
           // Not actually a forum (or empty) — bounce to plain chat view.
           navigate(`/chat/${chatId}`, { replace: true });
@@ -32,7 +33,16 @@ export default function TopicsPage() {
         }
         setTopics(t);
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || "Ошибка загрузки тем");
+        if (cancelled) return;
+        // Topics endpoint failed (often because this supergroup is not a forum
+        // at all). Fall back to the plain chat view so the chat is reachable.
+        const msg = String(e?.message || "");
+        if (/forum|not a forum|400|TOPIC/i.test(msg)) {
+          navigate(`/chat/${chatId}`, { replace: true });
+          return;
+        }
+        // Other errors: show message but also give the user a way out.
+        setError(msg || "Ошибка загрузки тем");
       }
     })();
     return () => { cancelled = true; };
@@ -41,14 +51,29 @@ export default function TopicsPage() {
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <div className="sticky top-0 z-10 bg-background border-b border-border p-4 flex items-center gap-3">
-        <Button variant="ghost" size="icon" onClick={() => navigate("/message")}>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => (window.history.length > 1 ? navigate(-1) : navigate("/message"))}
+        >
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <h1 className="font-semibold truncate">{chatTitle || "Темы"}</h1>
       </div>
 
       <div className="p-4 space-y-2">
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <div className="space-y-2">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/chat/${chatId}`, { replace: true })}
+            >
+              Открыть чат как обычный
+            </Button>
+          </div>
+        )}
         {topics === null && !error && <p className="text-sm text-muted-foreground">Загрузка...</p>}
         {topics && topics.length === 0 && (
           <p className="text-sm text-muted-foreground">В этой группе пока нет тем.</p>

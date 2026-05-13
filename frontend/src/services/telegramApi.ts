@@ -425,6 +425,22 @@ class TelegramApiService {
     return Array.isArray(res.queue) ? res.queue : [];
   }
 
+  async archiveChat(chatId: number): Promise<void> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    await this.fetchJson('/chat/archive', {
+      method: 'POST',
+      body: JSON.stringify({ chat_id: chatId }),
+    });
+  }
+
+  async unarchiveChat(chatId: number): Promise<void> {
+    if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
+    await this.fetchJson('/chat/unarchive', {
+      method: 'POST',
+      body: JSON.stringify({ chat_id: chatId }),
+    });
+  }
+
   async queueAction(
     chatId: number,
     action: 'done' | 'postpone' | 'task' | 'snooze' | 'skip',
