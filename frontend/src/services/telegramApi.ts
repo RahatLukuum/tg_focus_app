@@ -228,6 +228,11 @@ class TelegramApiService {
       if (m.mime_type) msg.mimeType = m.mime_type;
     }
     if (m.message_thread_id != null) msg.topicId = m.message_thread_id;
+    if (m.forwarded) {
+      msg.forwarded = true;
+      if (m.forward_from_name) msg.forwardFromName = m.forward_from_name;
+      if (m.forward_date) msg.forwardDate = new Date(m.forward_date * 1000);
+    }
     return msg;
   }
 

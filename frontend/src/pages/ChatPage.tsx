@@ -190,6 +190,8 @@ const ChatPage = () => {
       fileSize: (m as any).fileSize,
       mimeType: (m as any).mimeType,
       duration: m.duration,
+      forwarded: m.forwarded,
+      forwardFromName: m.forwardFromName,
     }));
   }, [state.messages, numericChatId, topicId]);
 

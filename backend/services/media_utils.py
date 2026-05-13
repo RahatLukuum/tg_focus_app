@@ -60,3 +60,49 @@ def extract_media_info(message: Message, *, chat_id: Optional[int] = None) -> di
     if mime_type:
         result["mime_type"] = mime_type
     return result
+
+
+def extract_forward_info(message) -> dict:
+    """Return a dict describing forwarded-message metadata, or {} if not forwarded.
+
+    Pyrogram exposes several forward attributes (forward_from for a user origin,
+    forward_from_chat for a channel origin, forward_sender_name for users who
+    hide their identity, and forward_date as a datetime). We normalize them
+    into a stable shape the frontend can render.
+    """
+    if not getattr(message, "forward_date", None):
+        return {}
+
+    name: str | None = None
+    fwd_from = getattr(message, "forward_from", None)
+    if fwd_from is not None:
+        first = getattr(fwd_from, "first_name", "") or ""
+        last = getattr(fwd_from, "last_name", "") or ""
+        full = (first + (" " + last if last else "")).strip()
+        if full:
+            name = full
+
+    if name is None:
+        fwd_chat = getattr(message, "forward_from_chat", None)
+        if fwd_chat is not None:
+            chat_title = getattr(fwd_chat, "title", None)
+            if chat_title:
+                name = chat_title
+
+    if name is None:
+        sender_name = getattr(message, "forward_sender_name", None)
+        if sender_name:
+            name = sender_name
+
+    fwd_date = getattr(message, "forward_date", None)
+    try:
+        fwd_ts = int(fwd_date.timestamp()) if fwd_date else None
+    except Exception:
+        fwd_ts = None
+
+    out: dict = {"forwarded": True}
+    if name:
+        out["forward_from_name"] = name
+    if fwd_ts is not None:
+        out["forward_date"] = fwd_ts
+    return out

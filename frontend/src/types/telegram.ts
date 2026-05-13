@@ -53,6 +53,9 @@ export interface Message {
   mimeType?: string;
   duration?: number;
   topicId?: number;
+  forwarded?: boolean;
+  forwardFromName?: string;
+  forwardDate?: Date;
 }
 
 export interface AuthState {

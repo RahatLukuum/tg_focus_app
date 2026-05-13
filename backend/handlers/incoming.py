@@ -13,7 +13,7 @@ from pyrogram import Client
 from pyrogram.types import Message
 
 from services.folder_service import FolderService
-from services.media_utils import extract_media_info
+from services.media_utils import extract_forward_info, extract_media_info
 from services.queue_service import QueueService
 from ws.broadcaster import Broadcaster
 
@@ -90,6 +90,7 @@ def make_incoming_handler(
                 "outgoing": message.outgoing,
             }
             payload.update(media_info)
+            payload.update(extract_forward_info(message))
             chat_title = (
                 message.chat.title
                 if getattr(message.chat, "title", None)

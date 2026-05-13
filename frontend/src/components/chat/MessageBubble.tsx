@@ -16,6 +16,8 @@ export type BubbleMessage = {
   fileSize?: number;
   mimeType?: string;
   duration?: number;
+  forwarded?: boolean;
+  forwardFromName?: string;
 };
 
 type Props = {
@@ -45,6 +47,19 @@ export function MessageBubble({ message, showSenderName, onLightbox }: Props) {
       >
         {showSenderName && message.senderName && (
           <p className="text-xs font-semibold text-blue-500 mb-0.5">{message.senderName}</p>
+        )}
+        {message.forwarded && (
+          <div className={[
+            "mb-1 pl-2 border-l-2",
+            message.isOutgoing
+              ? "border-primary-foreground/40 text-primary-foreground/80"
+              : "border-blue-500 text-blue-500",
+          ].join(" ")}>
+            <p className="text-[11px] leading-tight opacity-70">Переслано от</p>
+            <p className="text-xs font-medium leading-tight">
+              {message.forwardFromName || "скрытого пользователя"}
+            </p>
+          </div>
         )}
         {message.mediaType && message.mediaUrl && (
           <MediaRenderer

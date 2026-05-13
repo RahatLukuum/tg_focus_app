@@ -12,7 +12,7 @@ from pyrogram import Client
 
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
-from services.media_utils import extract_media_info
+from services.media_utils import extract_forward_info, extract_media_info
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 "outgoing": m.outgoing,
             }
             entry.update(media_info)
+            entry.update(extract_forward_info(m))
             mtid = getattr(m, "message_thread_id", None)
             if mtid is not None:
                 entry["message_thread_id"] = int(mtid)
@@ -106,6 +107,7 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 "outgoing": m.outgoing,
             }
             entry.update(media_info)
+            entry.update(extract_forward_info(m))
             mtid = getattr(m, "message_thread_id", None)
             if mtid is not None:
                 entry["message_thread_id"] = int(mtid)
