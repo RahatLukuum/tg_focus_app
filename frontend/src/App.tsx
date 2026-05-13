@@ -11,6 +11,7 @@ import MessagePage from "./pages/MessagePage";
 import ChatPage from "./pages/ChatPage";
 import TodoPage from "./pages/TodoPage";
 import TopicsPage from "@/pages/TopicsPage";
+import DeepLinkHandler from "@/components/DeepLinkHandler";
 
 const queryClient = new QueryClient();
 
@@ -38,6 +39,7 @@ const App = () => (
         <Sonner />
         {isTauri ? (
           <HashRouter>
+            <DeepLinkHandler />
             <Routes>
               <Route path="/" element={<AuthPage />} />
               <Route path="/home" element={<HomePage />} />
@@ -50,6 +52,7 @@ const App = () => (
           </HashRouter>
         ) : (
           <BrowserRouter basename={webRouterBasename()}>
+            <DeepLinkHandler />
             <Routes>
               <Route path="/" element={<AuthPage />} />
               <Route path="/home" element={<HomePage />} />
