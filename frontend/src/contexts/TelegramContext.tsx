@@ -2,6 +2,7 @@ import React, { createContext, useContext, useReducer, useEffect, useRef } from 
 import { TelegramConfig, AuthState, Chat, Message, User, MediaType } from '@/types/telegram';
 import { telegramApi } from '@/services/telegramApi';
 import { appendCached } from "@/services/messageCache";
+import { useDesktopNotifications } from "@/hooks/useDesktopNotifications";
 
 interface TelegramState {
   config?: TelegramConfig;
@@ -150,6 +151,11 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const wsRef = useRef<WebSocket | null>(null);
   const wsReconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wsBackoff = useRef(1000);
+
+  // Desktop notifications — no-op on web, native on Tauri.
+  const { notify } = useDesktopNotifications();
+  const notifyRef = useRef(notify);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
 
   const setConfig = async (config: TelegramConfig) => {
     dispatch({ type: 'SET_CONFIG', payload: config });
@@ -358,6 +364,10 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       void appendCached(mapped.chatId, [mapped]).catch(() => {});
       if (!mapped.isOutgoing) {
         dispatch({ type: 'INCOMING', payload: { chatId: mapped.chatId, at: Date.now() } });
+        // OS-level desktop notification (no-op on web).
+        const chatTitle = evt.chat_title || mapped.senderName || "Telegram";
+        const bodyText = (mapped.text || (mapped.mediaType ? `[${mapped.mediaType}]` : "[media]")).slice(0, 200);
+        void notifyRef.current({ title: chatTitle, body: bodyText, chatId: mapped.chatId });
       }
     }
   };
