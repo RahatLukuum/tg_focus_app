@@ -5,15 +5,19 @@ use tauri::{
     Manager,
 };
 
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
-            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
@@ -31,13 +35,7 @@ pub fn run() {
                     .menu(&menu)
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id().as_ref() {
-                        "show" => {
-                            if let Some(w) = app.get_webview_window("main") {
-                                let _ = w.show();
-                                let _ = w.unminimize();
-                                let _ = w.set_focus();
-                            }
-                        }
+                        "show" => show_main_window(app),
                         "hide" => {
                             if let Some(w) = app.get_webview_window("main") {
                                 let _ = w.hide();
@@ -52,16 +50,7 @@ pub fn run() {
                         use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
                         if let TrayIconEvent::Click { button, button_state, .. } = event {
                             if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                                let app = tray.app_handle();
-                                if let Some(w) = app.get_webview_window("main") {
-                                    if w.is_visible().unwrap_or(false) {
-                                        let _ = w.hide();
-                                    } else {
-                                        let _ = w.show();
-                                        let _ = w.unminimize();
-                                        let _ = w.set_focus();
-                                    }
-                                }
+                                show_main_window(tray.app_handle());
                             }
                         }
                     })
@@ -75,6 +64,14 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+            if !has_visible_windows {
+                show_main_window(app_handle);
+            }
+        }
+    });
 }
