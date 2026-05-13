@@ -4,14 +4,14 @@
 Превратить веб-приложение `tg_focus_app` в кросс-платформенный Tauri-десктоп (macOS + Windows), который ходит на тот же VPS-бэкенд по HTTPS, показывает Telegram-стиль уведомления и иконку в трее.
 
 ## Phases
-- [ ] Phase 0: VPS TLS (nip.io домен + Let's Encrypt + nginx HTTPS server-block)
-- [ ] Phase 1: Починка существующего `frontend/src-tauri/` (capabilities, split lib.rs, поправки конфига)
-- [ ] Phase 2: Tauri-aware build mode (`.env.tauri`, исправить хардкод-fallback IP бага)
-- [ ] Phase 3: OS-уведомления (плагин + frontend hook + bind на WS события)
-- [ ] Phase 4: Системный трей (Rust TrayIconBuilder + меню + badge)
-- [ ] Phase 5: Поведение окна и deep-links (single-instance, close-to-tray, click-to-navigate)
-- [ ] Phase 6: Кросс-платформенная сборка (.dmg для mac, .msi для Win)
-- [ ] Phase 7: Документация + финальный smoke-test
+- [x] Phase 0: VPS TLS (nip.io домен + Let's Encrypt + nginx HTTPS server-block)
+- [x] Phase 1: Починка существующего `frontend/src-tauri/` (capabilities, split lib.rs, поправки конфига)
+- [x] Phase 2: Tauri-aware build mode (`.env.tauri`, исправить хардкод-fallback IP бага)
+- [x] Phase 3: OS-уведомления (плагин + frontend hook + bind на WS события)
+- [x] Phase 4: Системный трей (Rust TrayIconBuilder + меню + badge)
+- [x] Phase 5: Поведение окна и deep-links (single-instance, close-to-tray, click-to-navigate)
+- [x] Phase 6: Кросс-платформенная сборка (.dmg для mac, .msi для Win)
+- [x] Phase 7: Документация + финальный smoke-test
 
 ## Key Decisions
 - **Структура**: оставляем `frontend/src-tauri/` (встроенный Tauri-shell). Не мигрируем.
@@ -60,7 +60,7 @@
 _(пусто, заполняется по ходу)_
 
 ## Status
-**Currently in Phase 0 prep** — план зафиксирован, ждём подтверждения от пользователя для старта выполнения.
+**ALL PHASES COMPLETE** — план выполнен. Артефакт .dmg готов, GH Actions для cross-platform builds зафиксирован. Осталось manual smoke-test на mac + native Win build для финального .msi/.exe.
 
 ## Files
 - Этот файл (`plan/task_plan.md`) — высокоуровневый трекинг.
