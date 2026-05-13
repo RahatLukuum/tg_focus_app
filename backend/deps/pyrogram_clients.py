@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from pyrogram import Client, filters
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, RawUpdateHandler
 from pyrogram.types import Message
 
 from config import AppConfig
@@ -24,6 +24,7 @@ class PyrogramClientManager:
         self._clients: dict[str, Client] = {}
         self._handler_factory: Optional[Callable[[Client, str], Callable]] = None
         self._outgoing_handler_factory: Optional[Callable[[Client, str], Callable]] = None
+        self._read_inbox_handler_factory: Optional[Callable[[Client, str], Callable]] = None
         self._authed: dict[str, bool] = {}
 
         proxy = cfg.proxy.to_pyrogram_dict() if cfg.proxy else None
@@ -55,6 +56,16 @@ class PyrogramClientManager:
         """Register a factory: factory(client, account) -> async handler(client, message)."""
         self._outgoing_handler_factory = factory
 
+    def set_read_inbox_handler_factory(
+        self, factory: Callable[[Client, str], Callable]
+    ) -> None:
+        """Register a factory: factory(client, account) -> async handler(client, update, users, chats).
+
+        Used for raw UpdateReadHistoryInbox / UpdateReadChannelInbox events
+        (read receipts from other devices).
+        """
+        self._read_inbox_handler_factory = factory
+
     def get_or_create(self, account: str) -> Client:
         key = account.strip()
         if not key:
@@ -75,6 +86,9 @@ class PyrogramClientManager:
         if self._outgoing_handler_factory is not None:
             out_handler = self._outgoing_handler_factory(client, key)
             client.add_handler(MessageHandler(out_handler, filters.outgoing & ~filters.service))
+        if self._read_inbox_handler_factory is not None:
+            read_handler = self._read_inbox_handler_factory(client, key)
+            client.add_handler(RawUpdateHandler(read_handler))
         self._clients[key] = client
         return client
 

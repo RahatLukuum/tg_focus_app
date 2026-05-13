@@ -15,13 +15,14 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pyrogram import filters
-from pyrogram.handlers import MessageHandler
+from pyrogram.handlers import MessageHandler, RawUpdateHandler
 
 from config import load_config
 from deps.auth import AuthDeps
 from deps.pyrogram_clients import PyrogramClientManager
 from handlers.incoming import make_incoming_handler
 from handlers.outgoing import make_outgoing_handler
+from handlers.read_inbox import make_read_inbox_handler
 from routers import ai as ai_router
 from routers import auth as auth_router
 from routers import dialogs as dialogs_router
@@ -71,6 +72,11 @@ def create_app() -> FastAPI:
             queue_service, broadcaster, account, queue_meta_cache=queue_meta_cache,
         )
     )
+    manager.set_read_inbox_handler_factory(
+        lambda client, account: make_read_inbox_handler(
+            queue_service, broadcaster, account, queue_meta_cache=queue_meta_cache,
+        )
+    )
 
     # Attach handler to default client too (it doesn't go through get_or_create).
     _default_handler = make_incoming_handler(
@@ -88,6 +94,12 @@ def create_app() -> FastAPI:
     manager.default.add_handler(
         MessageHandler(_default_out_handler, filters.outgoing & ~filters.service)
     )
+    # Default-account read-inbox handler — drops chat from queue when user
+    # reads it on another device (mobile, web, etc.).
+    _default_read_handler = make_read_inbox_handler(
+        queue_service, broadcaster, "", queue_meta_cache=queue_meta_cache,
+    )
+    manager.default.add_handler(RawUpdateHandler(_default_read_handler))
 
     # State stores.
     tasks_json = JsonStore(cfg.session_dir / "tasks.json", default_factory=list)
