@@ -11,6 +11,7 @@
         "core:window:allow-unminimize",
         "core:window:allow-close",
         "shell:default",
-        "notification:default"
+        "notification:default",
+        "core:tray:default"
     ]
 }
