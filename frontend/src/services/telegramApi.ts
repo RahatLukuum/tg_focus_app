@@ -247,6 +247,21 @@ class TelegramApiService {
   }
 
   async getOlderMessages(chatId: number, beforeId: number, limit: number = 100, topicId?: number): Promise<Message[]> {
+    const res = await this.getOlderMessagesPage(chatId, beforeId, limit, topicId);
+    return res.messages;
+  }
+
+  /**
+   * Like getOlderMessages, but also returns pagination metadata so the caller
+   * can keep walking back past pages that are entirely filtered out
+   * server-side (stickers, service messages, etc.).
+   */
+  async getOlderMessagesPage(
+    chatId: number,
+    beforeId: number,
+    limit: number = 100,
+    topicId?: number,
+  ): Promise<{ messages: Message[]; oldestFetchedId: number | null; reachedTop: boolean }> {
     if (!this.isAuthenticated) throw new Error('Пользователь не авторизован');
     const params = new URLSearchParams();
     params.set('chat_id', String(chatId));
@@ -254,7 +269,11 @@ class TelegramApiService {
     params.set('before_id', String(beforeId));
     if (topicId !== undefined) params.set('topic_id', String(topicId));
     const res = await this.fetchJson(`/messages?${params.toString()}`);
-    return (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id));
+    return {
+      messages: (res.messages || []).map((m: any) => this.mapMessage(m, res.chat_id)),
+      oldestFetchedId: res.oldest_fetched_id ?? null,
+      reachedTop: !!res.reached_top,
+    };
   }
 
   /**

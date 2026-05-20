@@ -58,7 +58,15 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 logger.debug("invalid before_id value %r, ignoring", before_id, exc_info=True)
         if topic_id is not None:
             kwargs["message_thread_id"] = int(topic_id)
+        # Track every message Pyrogram returns (incl. filtered ones) so the
+        # frontend can keep paginating past stretches of stickers/service
+        # messages that get filtered out below.
+        fetched_total = 0
+        oldest_fetched_id: Optional[int] = None
         async for m in client.get_chat_history(chat_id, **kwargs):
+            fetched_total += 1
+            if oldest_fetched_id is None or m.id < oldest_fetched_id:
+                oldest_fetched_id = int(m.id)
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
             if not text_content and not media_info and not is_self_chat:
@@ -79,7 +87,12 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
                 entry["message_thread_id"] = int(mtid)
             history.append(entry)
         history.reverse()
-        return {"chat_id": chat_id, "messages": history}
+        return {
+            "chat_id": chat_id,
+            "messages": history,
+            "oldest_fetched_id": oldest_fetched_id,
+            "reached_top": fetched_total < limit,
+        }
 
     @router.get("/messages/since")
     async def get_messages_since(

@@ -195,15 +195,30 @@ const ChatPage = () => {
   const onLoadOlder = useCallback(async () => {
     const list = state.messages[numericChatId];
     const firstId = list && list.length > 0 ? list[0].id : undefined;
-    if (!firstId) return { added: 0 };
-    const older = await telegramApi.getOlderMessages(numericChatId, firstId, 100, topicId);
-    if (older.length === 0) return { added: 0 };
-    dispatch({
-      type: 'PREPEND_MESSAGES',
-      payload: { chatId: numericChatId, messages: older },
-    });
-    await prependCached(numericChatId, older);
-    return { added: older.length };
+    if (!firstId) return { added: 0, hasMore: false };
+    // Walk back through pages until we either pull at least one displayable
+    // message, or Pyrogram confirms we hit the start of history. This skips
+    // long runs of filtered-out items (stickers, service messages) so the
+    // user can scroll all the way to the very first message in the chat.
+    let cursor = firstId;
+    for (let i = 0; i < 10; i++) {
+      const page = await telegramApi.getOlderMessagesPage(numericChatId, cursor, 100, topicId);
+      if (page.messages.length > 0) {
+        dispatch({
+          type: 'PREPEND_MESSAGES',
+          payload: { chatId: numericChatId, messages: page.messages },
+        });
+        await prependCached(numericChatId, page.messages);
+        return { added: page.messages.length, hasMore: !page.reachedTop };
+      }
+      if (page.reachedTop || page.oldestFetchedId == null) {
+        return { added: 0, hasMore: false };
+      }
+      cursor = page.oldestFetchedId;
+    }
+    // Didn't find any text/media in 10 pages — bail out for this scroll
+    // event but leave the door open for the next intersection.
+    return { added: 0, hasMore: true };
   }, [numericChatId, state.messages, topicId, dispatch]);
 
   const { sentinelRef } = useInfiniteScrollUp({

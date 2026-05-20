@@ -2,7 +2,7 @@ import { RefObject, useEffect, useRef } from "react";
 
 type Opts = {
   containerRef: RefObject<HTMLDivElement>;
-  onLoadMore: () => Promise<{ added: number }>;
+  onLoadMore: () => Promise<{ added: number; hasMore?: boolean }>;
   enabled: boolean;
   rootMargin?: string;
 };
@@ -30,15 +30,20 @@ export function useInfiniteScrollUp(opts: Opts) {
         const prevScrollHeight = container.scrollHeight;
         const prevScrollTop = container.scrollTop;
         try {
-          const { added } = await opts.onLoadMore();
-          if (added === 0) {
-            reachedTopRef.current = true;
-            io.disconnect();
-          } else {
+          const { added, hasMore } = await opts.onLoadMore();
+          if (added > 0) {
             requestAnimationFrame(() => {
               container.scrollTop =
                 prevScrollTop + (container.scrollHeight - prevScrollHeight);
             });
+          }
+          // Stop only when the server tells us we're at the very top.
+          // hasMore===false → reached top, otherwise keep listening (next
+          // intersection will retry, including the added===0 case where the
+          // page held only filtered-out items).
+          if (hasMore === false) {
+            reachedTopRef.current = true;
+            io.disconnect();
           }
         } catch {
           /* swallow — next intersection retries */
