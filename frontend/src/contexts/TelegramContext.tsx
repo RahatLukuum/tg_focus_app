@@ -33,6 +33,7 @@ type TelegramAction =
   | { type: 'SET_CHATS'; payload: Chat[] }
   | { type: 'SET_CONTACTS'; payload: Chat[] }
   | { type: 'SET_MESSAGES'; payload: { chatId: number; messages: Message[] } }
+  | { type: 'MERGE_MESSAGES'; payload: { chatId: number; messages: Message[] } }
   | { type: 'PREPEND_MESSAGES'; payload: { chatId: number; messages: Message[] } }
   | { type: 'ADD_MESSAGE'; payload: Message }
   | { type: 'SET_ACTIVE_CHAT'; payload: Chat }
@@ -90,6 +91,23 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
           [action.payload.chatId]: action.payload.messages 
         }
       };
+    case 'MERGE_MESSAGES': {
+      const existing = state.messages[action.payload.chatId] ?? [];
+      const seen = new Set(existing.map((m) => m.id));
+      const fresh = action.payload.messages.filter((m) => !seen.has(m.id));
+      if (fresh.length === 0 && existing.length === action.payload.messages.length) {
+        // Same set already in state — keep current reference to avoid re-renders.
+        return state;
+      }
+      const merged = [...existing, ...fresh].sort((a, b) => a.id - b.id);
+      return {
+        ...state,
+        messages: {
+          ...state.messages,
+          [action.payload.chatId]: merged,
+        },
+      };
+    }
     case 'PREPEND_MESSAGES': {
       const existing = state.messages[action.payload.chatId] ?? [];
       const seen = new Set(existing.map((m) => m.id));
@@ -424,6 +442,7 @@ export const TelegramProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (m.file_name) mapped.fileName = m.file_name;
         if (m.duration != null) mapped.duration = m.duration;
       }
+      if (evt.topic_id != null) mapped.topicId = evt.topic_id;
       dispatch({ type: 'ADD_MESSAGE', payload: mapped });
       // Keep the chat list fresh: bump last-message + reorder by recency.
       dispatch({

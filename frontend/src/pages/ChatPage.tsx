@@ -93,7 +93,7 @@ const ChatPage = () => {
       beforeId = older[0]?.id;
       pagesLoaded += 1;
     }
-    dispatch({ type: 'SET_MESSAGES', payload: { chatId: targetChatId, messages: allMessages } });
+    dispatch({ type: 'MERGE_MESSAGES', payload: { chatId: targetChatId, messages: allMessages } });
   }, [dispatch, topicId]);
 
   useEffect(() => {
@@ -110,7 +110,7 @@ const ChatPage = () => {
       let lastKnownId = 0;
       if (cached && cached.messages.length > 0) {
         dispatch({
-          type: "SET_MESSAGES",
+          type: "MERGE_MESSAGES",
           payload: { chatId: numericChatId, messages: cached.messages },
         });
         lastKnownId = cached.messages[cached.messages.length - 1]?.id ?? 0;
@@ -123,11 +123,8 @@ const ChatPage = () => {
           const newer = await telegramApi.getMessagesSince(numericChatId, lastKnownId, 50, topicId);
           if (cancelled || newer.length === 0) return;
           dispatch({
-            type: "SET_MESSAGES",
-            payload: {
-              chatId: numericChatId,
-              messages: [...(cached?.messages ?? []), ...newer],
-            },
+            type: "MERGE_MESSAGES",
+            payload: { chatId: numericChatId, messages: newer },
           });
           await appendCached(numericChatId, newer);
           scrollToBottom();
@@ -140,7 +137,7 @@ const ChatPage = () => {
           const fresh = await telegramApi.getMessages(numericChatId, 100, topicId);
           if (cancelled) return;
           dispatch({
-            type: "SET_MESSAGES",
+            type: "MERGE_MESSAGES",
             payload: { chatId: numericChatId, messages: fresh },
           });
           if (fresh.length > 0) {
