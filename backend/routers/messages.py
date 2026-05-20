@@ -50,8 +50,10 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
         history: list[dict[str, Any]] = []
         kwargs: dict[str, Any] = {"limit": limit}
         if before_id:
+            # Pyrogram's get_chat_history uses offset_id to start strictly
+            # OLDER than the given message id (does not include offset_id itself).
             try:
-                kwargs["max_id"] = int(before_id) - 1
+                kwargs["offset_id"] = int(before_id)
             except Exception:
                 logger.debug("invalid before_id value %r, ignoring", before_id, exc_info=True)
         if topic_id is not None:
@@ -89,10 +91,17 @@ def make_router(manager: PyrogramClientManager, auth: AuthDeps) -> APIRouter:
     ):
         client = await auth.get_authorized_client(account)
         history: list[dict[str, Any]] = []
-        kwargs: dict[str, Any] = {"limit": limit, "min_id": int(since_id)}
+        # Pyrogram has no min_id; fetch the freshest page and filter by id
+        # client-side. We pull more than `limit` to tolerate filtered-out
+        # messages (stickers, service msgs) before slicing.
+        fetch_limit = max(int(limit) * 4, 50)
+        kwargs: dict[str, Any] = {"limit": fetch_limit}
         if topic_id is not None:
             kwargs["message_thread_id"] = int(topic_id)
+        since = int(since_id)
         async for m in client.get_chat_history(chat_id, **kwargs):
+            if m.id <= since:
+                continue
             text_content = (m.text or m.caption or "").strip()
             media_info = extract_media_info(m, chat_id=chat_id)
             if not text_content and not media_info:
