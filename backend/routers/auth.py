@@ -13,7 +13,7 @@ from deps.pyrogram_clients import PyrogramClientManager
 logger = logging.getLogger(__name__)
 
 PENDING_TTL_SECONDS = 600  # 10 min — phone_code_hash valid window
-RATE_LIMIT_SECONDS = 30   # min interval between send_code attempts per phone
+RATE_LIMIT_SECONDS = 5    # local soft floor; Telegram still applies its own FLOOD_WAIT on top
 
 
 def make_router(manager: PyrogramClientManager) -> APIRouter:
@@ -45,6 +45,19 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
         await manager.ensure_connected(client)
         try:
             sent = await client.send_code(phone)
+            # Log delivery method (APP / SMS / CALL / FLASH_CALL / MISSED_CALL)
+            # so we can debug "code didn't arrive" — Telegram normally sends to
+            # the in-app channel first if any other client is online.
+            try:
+                _type = getattr(getattr(sent, "type", None), "name", None) or str(getattr(sent, "type", None))
+                _next = getattr(getattr(sent, "next_type", None), "name", None) or str(getattr(sent, "next_type", None))
+                _timeout = getattr(sent, "timeout", None)
+                logger.warning(
+                    "send_code OK phone=%s delivery=%s next=%s timeout=%s",
+                    phone, _type, _next, _timeout,
+                )
+            except Exception:
+                logger.warning("send_code: could not introspect SentCode object", exc_info=True)
             phone_code_hash = (
                 getattr(sent, "phone_code_hash", None)
                 or getattr(sent, "phone_code", None)
