@@ -52,7 +52,7 @@ cd frontend
 npm run tauri:dev          # dev окно с hot-reload фронта
 npm run tauri:build        # production артефакт в src-tauri/target/release/bundle/
 ```
-Production десктоп ходит на HTTPS-бэкенд `https://185-252-215-73.nip.io` (см. `frontend/.env.tauri`).
+Production десктоп ходит на HTTPS-бэкенд `https://194-62-42-159.nip.io` (см. `frontend/.env.tauri`).
 Web-build продолжает использовать `frontend/.env.production` (HTTP, через nginx-редирект на HTTPS).
 
 ### Docker (backend only)
@@ -76,6 +76,6 @@ Backend available at `http://localhost:8080`, health check: `GET /healthz`.
 - No database — all queue/state is ephemeral and reset on backend restart
 - Desktop shell — Tauri v2 (`frontend/src-tauri/`), плагины: `tauri-plugin-shell`, `tauri-plugin-notification`, `tauri-plugin-single-instance`, нативный tray через feature `tauri/tray-icon`
 - Tauri capabilities в `frontend/src-tauri/capabilities/default.json` — без этого Tauri v2 отказывает в любых API
-- Backend для десктопа — `https://185-252-215-73.nip.io` (Let's Encrypt + nginx + nip.io DNS wildcard); web и desktop ходят на один и тот же бэкенд
+- Backend для десктопа — `https://194-62-42-159.nip.io` (Let's Encrypt + nginx + nip.io DNS wildcard); web и desktop ходят на один и тот же бэкенд
 - Desktop sandbox path для уведомлений: см. `frontend/src/hooks/useDesktopNotifications.ts`
 - Deep-link с уведомления через `frontend/src/components/DeepLinkHandler.tsx` (focus event → pending chatId → navigate)

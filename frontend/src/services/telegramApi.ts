@@ -15,7 +15,7 @@ class TelegramApiService {
   constructor() {
     const envBase = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
     // Single source of truth: env with default to your server
-    this.baseUrl = (envBase && envBase.trim()) || 'https://185-252-215-73.nip.io';
+    this.baseUrl = (envBase && envBase.trim()) || 'https://194-62-42-159.nip.io';
     try {
       const saved = localStorage.getItem(ACTIVE_ACCOUNT_KEY);
       if (saved) this.activeAccount = saved;
