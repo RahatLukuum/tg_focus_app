@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ArrowLeft, Send, Paperclip, Mic, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -479,17 +480,23 @@ const ChatPage = () => {
             </Button>
           </div>
         ) : (
-          <form onSubmit={handleSendMessage} className="flex gap-2 items-center">
-            <Button type="button" variant="ghost" size="icon" onClick={() => setShowAttach(!showAttach)}>
+          <form onSubmit={handleSendMessage} className="flex gap-2 items-end">
+            <Button type="button" variant="ghost" size="icon" onClick={() => setShowAttach(!showAttach)} className="shrink-0">
               <Paperclip className="h-4 w-4" />
             </Button>
-            <Input
+            <AutoResizeTextarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               placeholder="Введите сообщение..."
               className="flex-1"
               autoFocus
               onFocus={() => setShowAttach(false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage(e as unknown as React.FormEvent);
+                }
+              }}
             />
             <Button
               type="button"
@@ -498,15 +505,16 @@ const ChatPage = () => {
               onClick={handleGenerateReply}
               disabled={isGenerating}
               title="Сгенерировать ответ с помощью AI"
+              className="shrink-0"
             >
               <Sparkles className={`h-4 w-4 ${isGenerating ? 'animate-spin' : ''}`} />
             </Button>
             {message.trim() ? (
-              <Button type="submit" size="icon">
+              <Button type="submit" size="icon" className="shrink-0">
                 <Send className="h-4 w-4" />
               </Button>
             ) : (
-              <Button type="button" size="icon" variant="secondary" onClick={startRecording}>
+              <Button type="button" size="icon" variant="secondary" onClick={startRecording} className="shrink-0">
                 <Mic className="h-4 w-4" />
               </Button>
             )}

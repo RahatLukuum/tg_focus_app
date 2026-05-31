@@ -121,16 +121,23 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
         },
       };
     }
-    case 'ADD_MESSAGE':
+    case 'ADD_MESSAGE': {
       const chatId = action.payload.chatId;
       const existingMessages = state.messages[chatId] || [];
+      // Dedupe by id — REST send response and WebSocket echo both dispatch
+      // ADD_MESSAGE for the same outgoing message, which used to cause the
+      // bubble to appear twice in QueuePage.
+      if (existingMessages.some((m) => m.id === action.payload.id)) {
+        return state;
+      }
       return {
         ...state,
         messages: {
           ...state.messages,
-          [chatId]: [...existingMessages, action.payload]
-        }
+          [chatId]: [...existingMessages, action.payload],
+        },
       };
+    }
     case 'INCOMING':
       return { ...state, lastIncomingChatId: action.payload.chatId, lastIncomingAt: action.payload.at };
     case 'QUEUE_DIRTY':

@@ -16,7 +16,7 @@ type Props = {
 
 export function TaskFromChatForm({ open, chatId, chatTitle, onClose, onCreated }: Props) {
   const [text, setText] = useState<string>(`Ответить ${chatTitle}`);
-  const [alsoRemove, setAlsoRemove] = useState<boolean>(false);
+  const [alsoRemove, setAlsoRemove] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
 
   if (!open) return null;

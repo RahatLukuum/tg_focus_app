@@ -30,7 +30,7 @@ export function QueueActionsBar({
   return (
     <>
       <div className="grid grid-cols-5 gap-2 p-3 border-t border-border">
-        <Button variant="default" onClick={onDone}>
+        <Button variant="outline" onClick={onDone}>
           <Check className="h-4 w-4 mr-1" />
           Готово
         </Button>
@@ -46,7 +46,7 @@ export function QueueActionsBar({
           <Archive className="h-4 w-4 mr-1" />
           В архив
         </Button>
-        <Button variant="ghost" onClick={onSkip}>
+        <Button variant="outline" onClick={onSkip}>
           <SkipForward className="h-4 w-4 mr-1" />
           Пропустить
         </Button>

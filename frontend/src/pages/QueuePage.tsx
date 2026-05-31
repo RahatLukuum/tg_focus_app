@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, MessageCircle, Send, Paperclip, Mic, ExternalLink, X, Folder } from 'lucide-react';
+import { ArrowLeft, MessageCircle, Send, Paperclip, Mic, ExternalLink, X, Folder, Sparkles, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { MediaRenderer } from '@/components/media/MediaRenderer';
 import { Lightbox, type LightboxItem } from '@/components/media/Lightbox';
@@ -16,6 +16,7 @@ const formatDuration = (s: number) => {
 };
 
 import { Input } from '@/components/ui/input';
+import { AutoResizeTextarea } from '@/components/ui/auto-resize-textarea';
 import { useTelegram } from '@/contexts/TelegramContext';
 import { telegramApi } from '@/services/telegramApi';
 import { useFolders } from '@/hooks/useFolders';
@@ -58,12 +59,6 @@ const QueuePage = () => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [queueIds, setQueueIds] = useState<number[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [newMessages, setNewMessages] = useState<Record<number, Array<{
-    id: number;
-    text: string;
-    isOutgoing: boolean;
-    time: string;
-  }>>>({});
   const { state, loadMessages, loadOlderMessages, sendMessage, sendMedia, loadChats, dispatch } = useTelegram();
   const { folders, chatToFolders } = useFolders();
   const [filter, setFilter] = useState<QueueFilterState>({ types: [], folderIds: [] });
@@ -84,6 +79,9 @@ const QueuePage = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewCaption, setPreviewCaption] = useState('');
   const [isSendingMedia, setIsSendingMedia] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [bootstrapLoaded, setBootstrapLoaded] = useState(false);
 
   useEffect(() => {
     telegramApi.getBootstrap()
@@ -97,7 +95,8 @@ const QueuePage = () => {
         if (!state.chats || state.chats.length === 0) {
           loadChats().catch(() => {});
         }
-      });
+      })
+      .finally(() => setBootstrapLoaded(true));
   }, []);
 
   useEffect(() => {
@@ -162,6 +161,23 @@ const QueuePage = () => {
 
   // Prefetch the next 1-2 chats in the queue.
   usePrefetchQueue(visibleQueueIds, currentIndex);
+
+  const queueTypeCounts = useMemo(() => {
+    let priv = 0;
+    let grp = 0;
+    for (const cid of queueIds) {
+      const chat = state.chats.find((c) => c.id === cid);
+      const t = chat?.type;
+      if (t === 'private' && cid > 0) priv += 1;
+      else if ((t === 'group' || t === 'supergroup') && cid < 0) grp += 1;
+      else if (!chat) {
+        // No chat metadata yet — fall back to id sign (Telegram convention).
+        if (cid > 0) priv += 1;
+        else grp += 1;
+      }
+    }
+    return { priv, grp };
+  }, [queueIds, state.chats]);
 
   useEffect(() => {
     if (!currentChatId) return;
@@ -280,9 +296,15 @@ const QueuePage = () => {
   const handleSkip = async () => {
     if (!currentChatId) return;
     try {
-      const newQueue = await telegramApi.queueAction(currentChatId, 'skip');
-      setQueueIds(newQueue);
-      setCurrentIndex((i) => Math.min(i, Math.max(0, newQueue.length - 1)));
+      // "Skip" now snoozes the chat for 30 minutes — it disappears from the
+      // queue and the snooze worker restores it automatically once expired.
+      const untilTs = Math.floor(Date.now() / 1000) + 30 * 60;
+      await telegramApi.queueAction(currentChatId, 'snooze', { snooze_until: untilTs });
+      setQueueIds((prev) => {
+        const next = prev.filter((id) => id !== currentChatId);
+        setCurrentIndex((i) => Math.min(i, Math.max(0, next.length - 1)));
+        return next;
+      });
       dispatch({ type: 'QUEUE_DIRTY' });
     } catch (e) {
       console.warn('skip failed', e);
@@ -333,23 +355,32 @@ const QueuePage = () => {
   }, [showHistory, history]);
 
   const handleSendMessage = async (message: string) => {
-    const newMessage = {
-      id: Date.now(),
-      text: message,
-      isOutgoing: true,
-      time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setNewMessages(prev => ({
-      ...prev,
-      [currentDialog.id]: [...(prev[currentDialog.id] || []), newMessage]
-    }));
+    if (!currentChatId) return;
     try {
       await sendMessage(currentChatId, message);
     } catch {
-      // ignore
+      // ignore — context already pushed an error toast / log
     }
   };
+
+  const handleGenerateReply = async () => {
+    if (!currentChatId || isGenerating) return;
+    setIsGenerating(true);
+    try {
+      const reply = await telegramApi.generateReply(currentChatId);
+      if (reply) setDraft(reply);
+    } catch (err: any) {
+      console.error('AI generation error:', err);
+      toast.error(err?.message || 'Не удалось сгенерировать ответ');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Drop the draft whenever the focused chat changes.
+  useEffect(() => {
+    setDraft('');
+  }, [currentChatId]);
 
   const openPreview = (file: File, type: MediaType) => {
     setPreviewFile(file);
@@ -458,12 +489,53 @@ const QueuePage = () => {
     };
   }, []);
 
-  const getCurrentMessages = () => {
-    const dialogNewMessages = newMessages[currentDialog.id] || [];
-    return dialogNewMessages;
-  };
+  // Snapshot the last message id at the moment we open a chat in the queue.
+  // Anything strictly newer + outgoing is what the user has just sent in this
+  // session; we render that as "Ваши сообщения" below. The snapshot avoids
+  // displaying outgoing messages from earlier sessions on top of the focus
+  // message.
+  const sessionAnchorRef = useRef<{ chatId: number | undefined; lastId: number }>({
+    chatId: undefined,
+    lastId: 0,
+  });
+  useEffect(() => {
+    if (!currentChatId) return;
+    if (sessionAnchorRef.current.chatId === currentChatId) return;
+    const list = state.messages[currentChatId] || [];
+    sessionAnchorRef.current = {
+      chatId: currentChatId,
+      lastId: list.length ? list[list.length - 1].id : 0,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChatId]);
+
+  const sentSinceOpened = useMemo(() => {
+    if (!currentChatId || sessionAnchorRef.current.chatId !== currentChatId) {
+      return [] as UiMsg[];
+    }
+    const anchor = sessionAnchorRef.current.lastId;
+    const list = state.messages[currentChatId] || [];
+    return list
+      .filter((m) => m.isOutgoing && m.id > anchor)
+      .map((m) => ({
+        id: m.id,
+        text: m.text,
+        isOutgoing: true,
+        time: new Date(m.date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+      }));
+  }, [state.messages, currentChatId]);
 
   if (!currentDialog) {
+    if (!bootstrapLoaded) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+          <div className="flex items-center gap-3 text-muted-foreground">
+            <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
+            <span>Загрузка очереди…</span>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Card className="w-full max-w-md p-8 text-center">
@@ -487,7 +559,10 @@ const QueuePage = () => {
           <h1 className="font-semibold leading-tight">Разбор очереди</h1>
           {queueIds.length > 0 && (
             <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
-              В очереди: {queueIds.length}
+              В очереди:{' '}
+              <span title="Личные">личные {queueTypeCounts.priv}</span>
+              {' · '}
+              <span title="Группы">группы {queueTypeCounts.grp}</span>
             </p>
           )}
         </div>
@@ -580,9 +655,13 @@ const QueuePage = () => {
                 </div>
               )}
               
-              {/* Current Message */}
+              {/* Current Message — focus on the most recent INCOMING msg so
+                  the user's own just-sent reply doesn't get echoed back here
+                  while waiting on a fresh reply. */}
               {(() => {
-                const lastMsg = state.messages[currentChatId]?.at(-1);
+                const all = state.messages[currentChatId] || [];
+                const lastIncoming = [...all].reverse().find((m) => !m.isOutgoing);
+                const lastMsg = lastIncoming ?? all.at(-1);
                 const queueMeta = state.queueMeta?.[currentChatId];
                 const topicTitle = queueMeta?.topic_title ?? null;
                 return (
@@ -616,14 +695,14 @@ const QueuePage = () => {
               })()}
 
               {/* New Messages */}
-              {getCurrentMessages().length > 0 && (
+              {sentSinceOpened.length > 0 && (
                 <div className="space-y-2">
                   <div className="border-t border-border pt-3">
                     <p className="text-xs text-muted-foreground font-medium">Ваши сообщения:</p>
                   </div>
-                  {getCurrentMessages().map((message) => (
+                  {sentSinceOpened.map((message) => (
                     <div key={message.id} className="flex justify-end">
-                      <div className="max-w-xs px-3 py-2 rounded-lg text-sm bg-primary text-primary-foreground">
+                      <div className="max-w-xs px-3 py-2 rounded-lg text-sm bg-primary text-primary-foreground whitespace-pre-wrap break-words">
                         <p>{message.text}</p>
                         <p className="text-xs mt-1 text-primary-foreground/70">
                           {message.time}
@@ -713,31 +792,60 @@ const QueuePage = () => {
             </Button>
           </div>
         ) : (
-          <form onSubmit={(e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target as HTMLFormElement);
-            const message = String(formData.get('message') || '');
-            if (message.trim()) {
-              handleSendMessage(message.trim());
-              (e.target as HTMLFormElement).reset();
-            }
-          }} className={`flex gap-2 max-w-2xl mx-auto ${showHistory ? 'pointer-events-auto' : ''}`}>
-            <Button type="button" variant="ghost" size="icon" onClick={() => setShowAttach(v => !v)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = draft.trim();
+              if (!trimmed) return;
+              handleSendMessage(trimmed);
+              setDraft('');
+            }}
+            className={`flex gap-2 items-end max-w-2xl mx-auto ${showHistory ? 'pointer-events-auto' : ''}`}
+          >
+            <Button type="button" variant="ghost" size="icon" onClick={() => setShowAttach(v => !v)} className="shrink-0">
               <Paperclip className="h-4 w-4" />
             </Button>
-            <Input
-              name="message"
+            <AutoResizeTextarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
               placeholder="Введите сообщение..."
               className="flex-1"
               autoComplete="off"
               onFocus={() => setShowAttach(false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  const trimmed = draft.trim();
+                  if (!trimmed) return;
+                  handleSendMessage(trimmed);
+                  setDraft('');
+                }
+              }}
             />
-            <Button type="button" size="icon" variant="secondary" onClick={startRecording}>
-              <Mic className="h-4 w-4" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={handleGenerateReply}
+              disabled={isGenerating || !currentChatId}
+              title="Сгенерировать ответ с помощью AI"
+              className="shrink-0"
+            >
+              {isGenerating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
             </Button>
-            <Button type="submit" size="icon">
-              <Send className="h-4 w-4" />
-            </Button>
+            {draft.trim() ? (
+              <Button type="submit" size="icon" className="shrink-0">
+                <Send className="h-4 w-4" />
+              </Button>
+            ) : (
+              <Button type="button" size="icon" variant="secondary" onClick={startRecording} className="shrink-0">
+                <Mic className="h-4 w-4" />
+              </Button>
+            )}
           </form>
         )}
       </div>

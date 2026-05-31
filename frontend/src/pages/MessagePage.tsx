@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { ArrowLeft, Search, Bookmark, MoreVertical, Archive, ArchiveRestore } from 'lucide-react';
+import { ArrowLeft, Search, Bookmark, MoreVertical, Archive, ArchiveRestore, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DropdownMenu,
@@ -112,7 +112,11 @@ const MessagePage = () => {
     if (tabs.type === 'private') {
       items.push(
         ...sourceChats
-          .filter((c) => c.type === 'private')
+          // Telegram convention: user (private) IDs are positive, group /
+          // supergroup / channel IDs are negative. Belt-and-suspenders against
+          // any backend mis-labelling that would otherwise let a group leak
+          // into the "Личные" tab.
+          .filter((c) => c.type === 'private' && c.id > 0)
           .map((c) => ({
             id: c.id,
             name: c.title,
@@ -125,7 +129,10 @@ const MessagePage = () => {
     } else if (tabs.type === 'groups') {
       items.push(
         ...sourceChats
-          .filter((c) => c.type === 'group' || c.type === 'supergroup')
+          .filter(
+            (c) =>
+              (c.type === 'group' || c.type === 'supergroup') && c.id < 0,
+          )
           .map((c) => ({
             id: c.id,
             name: c.title,
@@ -157,8 +164,10 @@ const MessagePage = () => {
 
   const typeCounts = useMemo(() => {
     const c: Record<'private' | 'groups' | 'contacts', number> = {
-      private: sourceChats.filter((c) => c.type === 'private').length,
-      groups: sourceChats.filter((c) => c.type === 'group' || c.type === 'supergroup').length,
+      private: sourceChats.filter((c) => c.type === 'private' && c.id > 0).length,
+      groups: sourceChats.filter(
+        (c) => (c.type === 'group' || c.type === 'supergroup') && c.id < 0,
+      ).length,
       contacts:
         tabs.scope.kind === 'archive'
           ? 0
@@ -273,7 +282,13 @@ const MessagePage = () => {
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
+        {(state.isLoading && state.chats.length === 0) ||
+        (tabs.scope.kind === 'archive' && !state.archivedLoaded) ? (
+          <div className="flex items-center justify-center h-48 text-muted-foreground gap-2">
+            <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+            <span>Загрузка чатов…</span>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="flex items-center justify-center h-48">
             <p className="text-muted-foreground">
               {searchQuery ? 'Ничего не найдено' : 'Нет чатов'}
@@ -305,9 +320,6 @@ const MessagePage = () => {
                     )}
                     <div className="flex-1 min-w-0">
                       <h3 className="font-medium truncate">{displayName}</h3>
-                      {item.lastMessage && (
-                        <p className="text-sm text-muted-foreground truncate">{item.lastMessage}</p>
-                      )}
                     </div>
                   </button>
                   {tabs.type !== 'contacts' && (
