@@ -45,16 +45,18 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
         await manager.ensure_connected(client)
         try:
             sent = await client.send_code(phone)
-            # Log delivery method (APP / SMS / CALL / FLASH_CALL / MISSED_CALL)
-            # so we can debug "code didn't arrive" — Telegram normally sends to
-            # the in-app channel first if any other client is online.
+            # Full dump of SentCode object so we can see every field Telegram
+            # actually returned (incl. hidden flags that Pyrogram drops on the
+            # floor).  Helps debug "code didn't arrive" mysteries.
             try:
                 _type = getattr(getattr(sent, "type", None), "name", None) or str(getattr(sent, "type", None))
                 _next = getattr(getattr(sent, "next_type", None), "name", None) or str(getattr(sent, "next_type", None))
                 _timeout = getattr(sent, "timeout", None)
+                _vars = {k: v for k, v in vars(sent).items() if k != "phone_code_hash"}
+                _dc = getattr(getattr(client, "session", None), "dc_id", None)
                 logger.warning(
-                    "send_code OK phone=%s delivery=%s next=%s timeout=%s",
-                    phone, _type, _next, _timeout,
+                    "send_code OK phone=%s delivery=%s next=%s timeout=%s dc=%s repr=%r vars=%r",
+                    phone, _type, _next, _timeout, _dc, sent, _vars,
                 )
             except Exception:
                 logger.warning("send_code: could not introspect SentCode object", exc_info=True)
@@ -69,6 +71,41 @@ def make_router(manager: PyrogramClientManager) -> APIRouter:
             return {"ok": True, "phone_code_hash": phone_code_hash}
         except Exception as e:
             logger.warning("send_code failed for phone %s: %s", phone, e)
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @router.api_route("/auth/resend_code", methods=["POST", "OPTIONS"])
+    @router.api_route("/auth/resend_code/", methods=["POST", "OPTIONS"])
+    async def auth_resend_code(payload: dict[str, str]):
+        """Ask Telegram to switch to the next available delivery channel.
+
+        Only useful when the previous send_code returned a SentCode with a
+        non-empty `next_type` — otherwise Telegram will refuse.
+        """
+        phone = payload.get("phone")
+        if not phone:
+            raise HTTPException(status_code=400, detail="phone is required")
+
+        entry = pending_logins.get(phone)
+        if not entry:
+            raise HTTPException(status_code=400, detail="send_code must be called first")
+        phone_code_hash, _exp = entry
+
+        client = manager.get_or_create(phone)
+        await manager.ensure_connected(client)
+        try:
+            sent = await client.resend_code(phone, phone_code_hash)
+            _type = getattr(getattr(sent, "type", None), "name", None) or str(getattr(sent, "type", None))
+            _next = getattr(getattr(sent, "next_type", None), "name", None) or str(getattr(sent, "next_type", None))
+            _timeout = getattr(sent, "timeout", None)
+            logger.warning(
+                "resend_code OK phone=%s delivery=%s next=%s timeout=%s repr=%r",
+                phone, _type, _next, _timeout, sent,
+            )
+            new_hash = getattr(sent, "phone_code_hash", None) or phone_code_hash
+            pending_logins[phone] = (new_hash, time.monotonic() + PENDING_TTL_SECONDS)
+            return {"ok": True, "delivery": _type, "next": _next, "phone_code_hash": new_hash}
+        except Exception as e:
+            logger.warning("resend_code failed for phone %s: %s", phone, e)
             raise HTTPException(status_code=400, detail=str(e))
 
     @router.api_route("/auth/sign_in", methods=["POST", "OPTIONS"])
