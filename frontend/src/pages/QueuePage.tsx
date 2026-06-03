@@ -494,23 +494,44 @@ const QueuePage = () => {
   // session; we render that as "Ваши сообщения" below. The snapshot avoids
   // displaying outgoing messages from earlier sessions on top of the focus
   // message.
-  const sessionAnchorRef = useRef<{ chatId: number | undefined; lastId: number }>({
+  // `ready` guards against anchoring before the chat history has loaded: if we
+  // anchored at lastId=0 while messages were still empty, every historical
+  // outgoing message would pass the `id > anchor` filter and leak into the
+  // "Ваши сообщения" block. We only anchor once the list is actually populated.
+  const sessionAnchorRef = useRef<{ chatId: number | undefined; lastId: number; ready: boolean }>({
     chatId: undefined,
     lastId: 0,
+    ready: false,
   });
   useEffect(() => {
     if (!currentChatId) return;
-    if (sessionAnchorRef.current.chatId === currentChatId) return;
     const list = state.messages[currentChatId] || [];
-    sessionAnchorRef.current = {
-      chatId: currentChatId,
-      lastId: list.length ? list[list.length - 1].id : 0,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChatId]);
+    // Switched to a new chat — reset. Stay un-ready until messages arrive.
+    if (sessionAnchorRef.current.chatId !== currentChatId) {
+      sessionAnchorRef.current = {
+        chatId: currentChatId,
+        lastId: list.length ? list[list.length - 1].id : 0,
+        ready: list.length > 0,
+      };
+      return;
+    }
+    // Same chat, messages just finished loading — anchor to the real last id so
+    // only messages sent *after* this point (i.e. during the review) show up.
+    if (!sessionAnchorRef.current.ready && list.length > 0) {
+      sessionAnchorRef.current = {
+        chatId: currentChatId,
+        lastId: list[list.length - 1].id,
+        ready: true,
+      };
+    }
+  }, [currentChatId, state.messages]);
 
   const sentSinceOpened = useMemo(() => {
-    if (!currentChatId || sessionAnchorRef.current.chatId !== currentChatId) {
+    if (
+      !currentChatId ||
+      sessionAnchorRef.current.chatId !== currentChatId ||
+      !sessionAnchorRef.current.ready
+    ) {
       return [] as UiMsg[];
     }
     const anchor = sessionAnchorRef.current.lastId;
