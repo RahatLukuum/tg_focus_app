@@ -67,10 +67,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+    app.run(|_app_handle, _event| {
+        // `RunEvent::Reopen` (dock icon re-click) only exists on macOS; gate it
+        // so the closure still compiles on Windows/Linux.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = _event {
             if !has_visible_windows {
-                show_main_window(app_handle);
+                show_main_window(_app_handle);
             }
         }
     });
