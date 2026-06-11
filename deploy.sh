@@ -3,7 +3,7 @@ set -euo pipefail
 
 # === Конфигурация ===
 VPS_USER="root"
-VPS_HOST="194.62.42.159"
+VPS_HOST="109.207.169.142"
 VPS_PROJECT="/opt/tg_focus_app"
 VPS_WEBROOT="/var/www/tg-focus"
 BRANCH="denis-branch"
