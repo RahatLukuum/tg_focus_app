@@ -8,7 +8,7 @@ import { telegramApi } from '@/services/telegramApi';
 
 const HomePage = () => {
   const navigate = useNavigate();
-  const { state } = useTelegram();
+  const { state, dispatch } = useTelegram();
   const [queueIds, setQueueIds] = useState<number[]>([]);
   const [queueLoaded, setQueueLoaded] = useState(false);
 
@@ -58,8 +58,18 @@ const HomePage = () => {
   const chatsLoading = state.isLoading || state.chats.length === 0;
   const showSpinner = !queueLoaded || chatsLoading;
 
-  const handleLogout = () => {
-    navigate('/');
+  const handleLogout = async () => {
+    // Раньше тут был только navigate('/') — авторизация не сбрасывалась, и
+    // AuthPage по isAuthenticated сразу отбрасывал назад на /home (кнопка
+    // выглядела «нерабочей»). Чистим и состояние API-синглтона, и контекст.
+    try {
+      await telegramApi.logout();
+    } catch {
+      // не блокируем выход, даже если очистка синглтона упала
+    }
+    dispatch({ type: 'LOGOUT' });
+    localStorage.removeItem('telegram_config');
+    navigate('/', { replace: true });
   };
 
   return (

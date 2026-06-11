@@ -203,7 +203,10 @@ const telegramReducer = (state: TelegramState, action: TelegramAction): Telegram
     case 'CLEAR_ERROR':
       return { ...state, error: undefined };
     case 'LOGOUT':
-      return { ...initialState };
+      // Сбрасываем всё, КРОМЕ isInitialized: эффект инициализации
+      // (SET_INITIALIZED) отрабатывает один раз при монтировании провайдера и
+      // после выхода не повторится, иначе AuthPage навсегда зависнет на «Загрузка...».
+      return { ...initialState, isInitialized: true };
     default:
       return state;
   }
